@@ -15,6 +15,9 @@ Add the Adzuna Connecteur de source end to end. The connector should use the sou
 - [ ] Source errors, auth failures, and rate-limit responses are reported as Echec de source without failing the whole Session de recherche.
 - [ ] The connector can be enabled or disabled by configuration.
 - [ ] Tests cover successful normalization, missing optional fields, source failure, and disabled-source behavior.
+- [ ] A live Adzuna smoke test is available behind a `live_adzuna` pytest mark,
+  skips when credentials are missing, and can be run during PR review with
+  `sbx exec --env-file .env.ralph.local mirandole-001 uv run pytest -m live_adzuna`.
 
 ## Implementation notes
 
@@ -25,6 +28,8 @@ Add the Adzuna Connecteur de source end to end. The connector should use the sou
   `MIRANDOLE_ADZUNA_APP_KEY`; `distance=10` and `distance=50` change the result
   count for `what=Python&where=Paris`, so the connector can map
   `rayon_demande_km` to Adzuna's `distance` parameter.
+- The live smoke test must not run as part of the default test suite unless the
+  `live_adzuna` mark is explicitly selected.
 
 ## Blocked by
 

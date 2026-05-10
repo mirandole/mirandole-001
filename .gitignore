@@ -8,3 +8,4 @@ var/
 logs/
 ralph/
 france-travail-api-documentation.json
+.env.ralph.local
