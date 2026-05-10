@@ -16,6 +16,19 @@ def _read_required_env(name: str) -> str:
     return value
 
 
+def _read_positive_int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed_value = int(value)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a positive integer") from exc
+    if parsed_value < 1:
+        raise ConfigError(f"{name} must be a positive integer")
+    return parsed_value
+
+
 @dataclass(frozen=True)
 class Settings:
     password: str
@@ -25,6 +38,10 @@ class Settings:
     france_travail_enabled: bool = False
     france_travail_client_id: str | None = None
     france_travail_client_secret: str | None = None
+    adzuna_enabled: bool = False
+    adzuna_app_id: str | None = None
+    adzuna_app_key: str | None = None
+    adzuna_pages_per_search: int = 4
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -39,6 +56,12 @@ class Settings:
         france_travail_client_secret = os.getenv(
             "MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET"
         )
+        adzuna_enabled = os.getenv("MIRANDOLE_ADZUNA_ENABLED", "false").lower()
+        adzuna_app_id = os.getenv("MIRANDOLE_ADZUNA_APP_ID")
+        adzuna_app_key = os.getenv("MIRANDOLE_ADZUNA_APP_KEY")
+        adzuna_pages_per_search = _read_positive_int_env(
+            "MIRANDOLE_ADZUNA_PAGES_PER_SEARCH", 4
+        )
 
         if len(password) < 12:
             raise ConfigError("MIRANDOLE_PASSWORD must be at least 12 characters")
@@ -48,6 +71,8 @@ class Settings:
             raise ConfigError("MIRANDOLE_COOKIE_SECURE must be true or false")
         if france_travail_enabled not in {"true", "false"}:
             raise ConfigError("MIRANDOLE_FRANCE_TRAVAIL_ENABLED must be true or false")
+        if adzuna_enabled not in {"true", "false"}:
+            raise ConfigError("MIRANDOLE_ADZUNA_ENABLED must be true or false")
         if france_travail_enabled == "true" and (
             not france_travail_client_id or not france_travail_client_id.strip()
         ):
@@ -62,6 +87,20 @@ class Settings:
                 "MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET is required when "
                 "MIRANDOLE_FRANCE_TRAVAIL_ENABLED is true"
             )
+        if adzuna_enabled == "true" and (
+            not adzuna_app_id or not adzuna_app_id.strip()
+        ):
+            raise ConfigError(
+                "MIRANDOLE_ADZUNA_APP_ID is required when "
+                "MIRANDOLE_ADZUNA_ENABLED is true"
+            )
+        if adzuna_enabled == "true" and (
+            not adzuna_app_key or not adzuna_app_key.strip()
+        ):
+            raise ConfigError(
+                "MIRANDOLE_ADZUNA_APP_KEY is required when "
+                "MIRANDOLE_ADZUNA_ENABLED is true"
+            )
 
         return cls(
             password=password,
@@ -71,4 +110,8 @@ class Settings:
             france_travail_enabled=france_travail_enabled == "true",
             france_travail_client_id=france_travail_client_id,
             france_travail_client_secret=france_travail_client_secret,
+            adzuna_enabled=adzuna_enabled == "true",
+            adzuna_app_id=adzuna_app_id,
+            adzuna_app_key=adzuna_app_key,
+            adzuna_pages_per_search=adzuna_pages_per_search,
         )

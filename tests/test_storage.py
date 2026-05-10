@@ -1,9 +1,15 @@
+import logging
+import os
 import sqlite3
 from json import dumps
 from pathlib import Path
 
+import pytest
+
 from mirandole.config import Settings
 from mirandole.search import (
+    AdzunaConnector,
+    AdzunaHttpResponse,
     DemoSourceConnector,
     DemoSourceUnavailable,
     FranceTravailConnector,
@@ -109,6 +115,53 @@ class FakeFranceTravailHttpClient:
         )
 
 
+class FakeAdzunaHttpClient:
+    def __init__(
+        self,
+        *,
+        search_status_code: int = 200,
+        search_payload: dict[str, object] | None = None,
+        search_payloads: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.search_status_code = search_status_code
+        self.search_payloads = search_payloads or [search_payload or {"results": []}]
+        self.search_urls: list[str] = []
+        self.search_params_history: list[dict[str, str]] = []
+        self.search_headers_history: list[dict[str, str]] = []
+        self.search_params: dict[str, str] | None = None
+        self.search_headers: dict[str, str] | None = None
+
+    def get_json(
+        self, url: str, params: dict[str, str], headers: dict[str, str]
+    ) -> AdzunaHttpResponse:
+        payload_index = min(len(self.search_urls), len(self.search_payloads) - 1)
+        self.search_urls.append(url)
+        self.search_params_history.append(params)
+        self.search_headers_history.append(headers)
+        self.search_params = params
+        self.search_headers = headers
+        return AdzunaHttpResponse(
+            status_code=self.search_status_code,
+            body=dumps(self.search_payloads[payload_index]).encode(),
+        )
+
+
+def _adzuna_search_payload(
+    *, page: int, result_count: int, total_count: int
+) -> dict[str, object]:
+    return {
+        "count": total_count,
+        "results": [
+            {
+                "id": f"{page}-{index}",
+                "title": f"Developpeur Python page {page} offre {index}",
+                "redirect_url": f"https://www.adzuna.fr/details/{page}-{index}",
+            }
+            for index in range(result_count)
+        ],
+    }
+
+
 def test_initialize_storage_is_idempotent(tmp_path: Path) -> None:
     database_path = tmp_path / "stockage" / "app.sqlite3"
 
@@ -207,8 +260,7 @@ def test_france_travail_connector_normalizes_resultats_offre() -> None:
         "client_secret": "client-secret",
         "scope": "api_offresdemploiv2 o2dsoffre",
     }
-    assert http_client.location_params == {
-    }
+    assert http_client.location_params == {}
     assert http_client.search_params == {
         "motsCles": "Developpeur",
         "commune": "44109",
@@ -234,9 +286,7 @@ def test_france_travail_connector_normalizes_resultats_offre() -> None:
 
 def test_france_travail_connector_resolves_lyon_to_commune_code() -> None:
     http_client = FakeFranceTravailHttpClient(
-        location_payload=[
-            {"code": "69123", "codePostal": "69000", "libelle": "LYON"}
-        ]
+        location_payload=[{"code": "69123", "codePostal": "69000", "libelle": "LYON"}]
     )
     connector = FranceTravailConnector(
         client_id="client-id", client_secret="client-secret", http_client=http_client
@@ -351,6 +401,232 @@ def test_france_travail_auth_failure_is_echec_de_source() -> None:
         raise AssertionError("Expected SourceConnectorUnavailable")
 
 
+def test_adzuna_connector_normalizes_resultats_offre(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    http_client = FakeAdzunaHttpClient(
+        search_payload={
+            "count": 42,
+            "results": [
+                {
+                    "id": "499",
+                    "title": "Developpeur Python",
+                    "company": {"display_name": "Atelier Hexagone"},
+                    "location": {
+                        "display_name": "Nantes, Loire-Atlantique",
+                        "area": ["France", "Pays de la Loire", "Nantes"],
+                    },
+                    "created": "2026-05-10T08:15:00Z",
+                    "contract_type": "permanent",
+                    "salary_min": 45000,
+                    "salary_max": 55000,
+                    "description": "Developpement API Python. Bac+5 apprecie.",
+                    "redirect_url": "https://www.adzuna.fr/details/499?utm=test",
+                }
+            ],
+        }
+    )
+    connector = AdzunaConnector(
+        app_id="app-id", app_key="app-key", http_client=http_client
+    )
+    caplog.set_level(logging.INFO, logger="mirandole.search")
+
+    results = connector.search(
+        intitule="Developpeur", localisation="Nantes", rayon_demande_km=30
+    )
+
+    assert http_client.search_params == {
+        "app_id": "app-id",
+        "app_key": "app-key",
+        "what": "Developpeur",
+        "where": "Nantes",
+        "distance": "30",
+        "results_per_page": "50",
+        "sort_by": "date",
+        "sort_direction": "down",
+        "content-type": "application/json",
+    }
+    assert http_client.search_headers == {"Accept": "application/json"}
+    assert http_client.search_urls == ["https://api.adzuna.com/v1/api/jobs/fr/search/1"]
+    assert len(results) == 1
+    assert results[0].source_name == "Adzuna"
+    assert results[0].source_radius_km == 30
+    assert results[0].title == "Developpeur Python"
+    assert results[0].company == "Atelier Hexagone"
+    assert results[0].city == "Nantes, Loire-Atlantique"
+    assert results[0].published_at == "2026-05-10"
+    assert results[0].contract_type == "CDI"
+    assert results[0].salary == "45000 - 55000 EUR"
+    assert results[0].description_source == "Developpement API Python. Bac+5 apprecie."
+    assert results[0].source_url == "https://www.adzuna.fr/details/499?utm=test"
+    assert results[0].source_identifier == "499"
+    assert results[0].result_identity == "Adzuna:499"
+    assert (
+        "Adzuna a recupere 1 offre(s) sur 42 disponible(s) en 1 page(s) "
+        "pour intitule='Developpeur' localisation='Nantes' rayon=30 km."
+    ) in caplog.messages
+
+
+def test_adzuna_connector_fetches_four_pages_sorted_by_date_descending() -> None:
+    http_client = FakeAdzunaHttpClient(
+        search_payloads=[
+            _adzuna_search_payload(page=page, result_count=50, total_count=250)
+            for page in range(1, 5)
+        ]
+    )
+    connector = AdzunaConnector(
+        app_id="app-id", app_key="app-key", http_client=http_client
+    )
+
+    results = connector.search(
+        intitule="Python", localisation="Paris", rayon_demande_km=25
+    )
+
+    assert len(results) == 200
+    assert http_client.search_urls == [
+        f"https://api.adzuna.com/v1/api/jobs/fr/search/{page}" for page in range(1, 5)
+    ]
+    assert http_client.search_params_history == [
+        {
+            "app_id": "app-id",
+            "app_key": "app-key",
+            "what": "Python",
+            "where": "Paris",
+            "distance": "25",
+            "results_per_page": "50",
+            "sort_by": "date",
+            "sort_direction": "down",
+            "content-type": "application/json",
+        }
+        for _ in range(4)
+    ]
+    assert results[0].result_identity == "Adzuna:1-0"
+    assert results[-1].result_identity == "Adzuna:4-49"
+
+
+def test_adzuna_connector_stops_when_page_returns_less_than_page_size() -> None:
+    http_client = FakeAdzunaHttpClient(
+        search_payloads=[
+            _adzuna_search_payload(page=1, result_count=50, total_count=62),
+            _adzuna_search_payload(page=2, result_count=12, total_count=62),
+            _adzuna_search_payload(page=3, result_count=50, total_count=62),
+        ]
+    )
+    connector = AdzunaConnector(
+        app_id="app-id", app_key="app-key", http_client=http_client
+    )
+
+    results = connector.search(
+        intitule="Python", localisation="Paris", rayon_demande_km=25
+    )
+
+    assert len(results) == 62
+    assert http_client.search_urls == [
+        "https://api.adzuna.com/v1/api/jobs/fr/search/1",
+        "https://api.adzuna.com/v1/api/jobs/fr/search/2",
+    ]
+
+
+def test_adzuna_connector_uses_configured_pages_per_search() -> None:
+    http_client = FakeAdzunaHttpClient(
+        search_payloads=[
+            _adzuna_search_payload(page=page, result_count=50, total_count=250)
+            for page in range(1, 4)
+        ]
+    )
+    connector = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        pages_per_search=3,
+        http_client=http_client,
+    )
+
+    results = connector.search(
+        intitule="Python", localisation="Paris", rayon_demande_km=25
+    )
+
+    assert len(results) == 150
+    assert http_client.search_urls == [
+        f"https://api.adzuna.com/v1/api/jobs/fr/search/{page}" for page in range(1, 4)
+    ]
+
+
+def test_adzuna_connector_handles_missing_optional_fields() -> None:
+    connector = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        http_client=FakeAdzunaHttpClient(
+            search_payload={
+                "results": [
+                    {
+                        "id": "500",
+                        "title": "Support applicatif",
+                        "location": {"area": ["France", "Bretagne", "Rennes"]},
+                    }
+                ]
+            }
+        ),
+    )
+
+    results = connector.search(
+        intitule="Support", localisation="Rennes", rayon_demande_km=10
+    )
+
+    assert len(results) == 1
+    assert results[0].company == "Entreprise non precisee"
+    assert results[0].city == "France"
+    assert results[0].published_at is None
+    assert results[0].contract_type == "Non precise"
+    assert results[0].salary is None
+    assert results[0].description_source is None
+    assert results[0].source_url == "https://www.adzuna.fr/details/500"
+    assert results[0].result_identity == "Adzuna:500"
+
+
+def test_adzuna_source_failure_does_not_fail_session(tmp_path: Path) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    adzuna = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        http_client=FakeAdzunaHttpClient(search_status_code=429),
+    )
+
+    trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connectors=[DemoSourceConnector(), adzuna],
+    )
+
+    results = list_offer_results_for_session(database_path, trace.session.id)
+    failures = list_source_failures_for_session(database_path, trace.session.id)
+
+    assert trace.result_count == 5
+    assert trace.failure_count == 1
+    assert results
+    assert failures[0].source_name == "Adzuna"
+    assert "HTTP 429" in failures[0].message
+
+
+def test_adzuna_auth_failure_is_echec_de_source() -> None:
+    connector = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        http_client=FakeAdzunaHttpClient(search_status_code=401),
+    )
+
+    try:
+        connector.search(
+            intitule="Developpeur", localisation="Nantes", rayon_demande_km=20
+        )
+    except SourceConnectorUnavailable as exc:
+        assert "HTTP 401" in str(exc)
+    else:
+        raise AssertionError("Expected SourceConnectorUnavailable")
+
+
 def test_france_travail_connector_is_disabled_by_configuration(tmp_path: Path) -> None:
     settings = Settings(
         password="correct horse battery staple",
@@ -384,6 +660,82 @@ def test_france_travail_connector_is_enabled_by_configuration(tmp_path: Path) ->
         "Source demo",
         "France Travail",
     ]
+
+
+def test_adzuna_connector_is_disabled_by_configuration(tmp_path: Path) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        adzuna_enabled=False,
+        adzuna_app_id=None,
+        adzuna_app_key=None,
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert [connector.source_name for connector in connectors] == ["Source demo"]
+
+
+def test_adzuna_connector_is_enabled_by_configuration(tmp_path: Path) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        adzuna_enabled=True,
+        adzuna_app_id="app-id",
+        adzuna_app_key="app-key",
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert [connector.source_name for connector in connectors] == [
+        "Source demo",
+        "Adzuna",
+    ]
+    assert isinstance(connectors[1], AdzunaConnector)
+    assert connectors[1].pages_per_search == 4
+
+
+def test_adzuna_pages_per_search_is_passed_from_configuration(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        adzuna_enabled=True,
+        adzuna_app_id="app-id",
+        adzuna_app_key="app-key",
+        adzuna_pages_per_search=6,
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert isinstance(connectors[1], AdzunaConnector)
+    assert connectors[1].pages_per_search == 6
+
+
+@pytest.mark.live_adzuna
+def test_live_adzuna_smoke_returns_resultats_offre() -> None:
+    app_id = os.getenv("MIRANDOLE_ADZUNA_APP_ID")
+    app_key = os.getenv("MIRANDOLE_ADZUNA_APP_KEY")
+    if not app_id or not app_key:
+        pytest.skip("MIRANDOLE_ADZUNA_APP_ID and MIRANDOLE_ADZUNA_APP_KEY are required")
+    connector = AdzunaConnector(app_id=app_id, app_key=app_key)
+
+    results = connector.search(
+        intitule="Python", localisation="Paris", rayon_demande_km=10
+    )
+
+    assert isinstance(results, list)
+    if results:
+        assert results[0].source_name == "Adzuna"
+        assert results[0].source_url
+        assert results[0].result_identity.startswith("Adzuna:")
 
 
 def test_results_are_sorted_by_freshness_with_unknown_dates_last(

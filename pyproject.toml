@@ -29,6 +29,10 @@ packages = ["src/mirandole"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = ["-m", "not live_adzuna"]
+markers = [
+    "live_adzuna: live Adzuna smoke test requiring MIRANDOLE_ADZUNA_APP_ID and MIRANDOLE_ADZUNA_APP_KEY",
+]
 
 [tool.ruff]
 line-length = 88
