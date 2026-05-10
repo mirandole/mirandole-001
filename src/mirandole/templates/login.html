@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel" aria-labelledby="page-title">
+  <h1 id="page-title">Acces protege</h1>
+  <form method="post" action="/login">
+    <label for="password">Mot de passe</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    {% if error %}
+    <p class="error">{{ error }}</p>
+    {% endif %}
+    <div class="actions">
+      <button type="submit">Se connecter</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
