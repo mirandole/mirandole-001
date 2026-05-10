@@ -10,6 +10,14 @@ ISSUE="$(
     --label ready-for-agent \
     --json number,title,labels,comments \
     --jq '
+      def latest_ralph_status:
+        [
+          .comments[].body
+          | capture("RALPH_STATUS: (?<status>[A-Z_]+)")?
+          | .status
+        ]
+        | last;
+
       [
         .[]
         | select(([.labels[].name] | index("ready-for-human") | not))
@@ -17,10 +25,8 @@ ISSUE="$(
         | select(([.labels[].name] | index("needs-triage") | not))
         | select(([.labels[].name] | index("wontfix") | not))
         | select(
-            ([.comments[].body]
-              | map(test("RALPH_STATUS: (IN_PROGRESS|PR_OPEN|BLOCKED)"))
-              | any
-            ) | not
+            (latest_ralph_status // "") as $status
+            | ["IN_PROGRESS", "PR_OPEN", "BLOCKED"] | index($status) | not
           )
       ]
       | sort_by(.number)
