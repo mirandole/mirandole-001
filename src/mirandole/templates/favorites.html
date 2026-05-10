@@ -26,7 +26,11 @@
           <li class="result-card {% if result.consulted_at %}consulted{% endif %}">
             <div class="result-heading">
               <h2>
-                <a href="/offer-results/{{ result.id }}/open" rel="external">
+                <a
+                  href="/offer-results/{{ result.id }}/open"
+                  target="_blank"
+                  rel="external noopener noreferrer"
+                >
                   {{ result.title }}
                 </a>
               </h2>
