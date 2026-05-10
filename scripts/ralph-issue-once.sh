@@ -80,9 +80,22 @@ EOF
 
 echo "Running issue #$ISSUE on branch $BRANCH"
 
-sbx run codex \
-  --name "$SANDBOX" \
-  --branch "$BRANCH" \
-  -- exec \
-  --sandbox workspace-write \
-  "$(cat "$PROMPT_FILE")"
+if sbx ls | awk 'NR > 1 {print $1}' | grep -qx "$SANDBOX"; then
+  echo "Sandbox '$SANDBOX' already exists; reusing it with branch $BRANCH"
+
+  sbx run \
+    --branch "$BRANCH" \
+    "$SANDBOX" \
+    -- exec \
+    --sandbox workspace-write \
+    "$(cat "$PROMPT_FILE")"
+else
+  echo "Sandbox '$SANDBOX' does not exist; creating it with branch $BRANCH"
+
+  sbx run codex \
+    --name "$SANDBOX" \
+    --branch "$BRANCH" \
+    -- exec \
+    --sandbox workspace-write \
+    "$(cat "$PROMPT_FILE")"
+fi
