@@ -13,7 +13,7 @@ DIPLOMA_LEVELS = [
     "Bac+5",
     "Doctorat",
 ]
-DEFAULT_INCLUDED_CONTRACT_TYPES = ["CDI", "CDD", "Freelance", "Interim"]
+DEFAULT_INCLUDED_CONTRACT_TYPES = ["CDI", "CDD", "Freelance", "Interim", "Non precise"]
 EXCLUDED_CONTRACT_TYPES = ["Stage", "Alternance"]
 
 DEFAULT_SKILL_DICTIONARY = {

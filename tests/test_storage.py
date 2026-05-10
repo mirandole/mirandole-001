@@ -4,6 +4,8 @@ from pathlib import Path
 
 from mirandole.config import Settings
 from mirandole.search import (
+    AdzunaConnector,
+    AdzunaHttpResponse,
     DemoSourceConnector,
     DemoSourceUnavailable,
     FranceTravailConnector,
@@ -109,6 +111,29 @@ class FakeFranceTravailHttpClient:
         )
 
 
+class FakeAdzunaHttpClient:
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        pages: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.pages = pages or [{"count": 0, "results": []}]
+        self.requests: list[dict[str, str]] = []
+
+    def get_json(
+        self, url: str, params: dict[str, str], headers: dict[str, str]
+    ) -> AdzunaHttpResponse:
+        self.requests.append(params)
+        page_index = len(self.requests) - 1
+        payload = self.pages[min(page_index, len(self.pages) - 1)]
+        return AdzunaHttpResponse(
+            status_code=self.status_code,
+            body=dumps(payload).encode(),
+        )
+
+
 def test_initialize_storage_is_idempotent(tmp_path: Path) -> None:
     database_path = tmp_path / "stockage" / "app.sqlite3"
 
@@ -207,8 +232,7 @@ def test_france_travail_connector_normalizes_resultats_offre() -> None:
         "client_secret": "client-secret",
         "scope": "api_offresdemploiv2 o2dsoffre",
     }
-    assert http_client.location_params == {
-    }
+    assert http_client.location_params == {}
     assert http_client.search_params == {
         "motsCles": "Developpeur",
         "commune": "44109",
@@ -234,9 +258,7 @@ def test_france_travail_connector_normalizes_resultats_offre() -> None:
 
 def test_france_travail_connector_resolves_lyon_to_commune_code() -> None:
     http_client = FakeFranceTravailHttpClient(
-        location_payload=[
-            {"code": "69123", "codePostal": "69000", "libelle": "LYON"}
-        ]
+        location_payload=[{"code": "69123", "codePostal": "69000", "libelle": "LYON"}]
     )
     connector = FranceTravailConnector(
         client_id="client-id", client_secret="client-secret", http_client=http_client
@@ -302,6 +324,179 @@ def test_france_travail_connector_handles_missing_optional_fields() -> None:
     assert results[0].source_url == (
         "https://candidat.francetravail.fr/offres/recherche/detail/176DEF"
     )
+
+
+def test_adzuna_connector_normalizes_results_and_uses_larger_pages() -> None:
+    http_client = FakeAdzunaHttpClient(
+        pages=[
+            {
+                "count": 1,
+                "results": [
+                    {
+                        "id": "adzuna-1",
+                        "title": "Administrateur Systeme Linux",
+                        "company": {"display_name": "Atelier Hexagone"},
+                        "location": {
+                            "display_name": "Paris, Ile-de-France",
+                            "area": ["France", "Ile-de-France", "Paris"],
+                        },
+                        "created": "2026-05-10T08:15:00Z",
+                        "description": "Administration Linux. Experience 3 ans.",
+                        "redirect_url": "https://adzuna.example/offre/1",
+                        "contract_type": "permanent",
+                        "salary_min": 45000,
+                        "salary_max": 55000,
+                    }
+                ],
+            }
+        ]
+    )
+    connector = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        results_per_page=50,
+        max_results=100,
+        http_client=http_client,
+    )
+
+    results = connector.search(
+        intitule="Administrateur système", localisation="Paris", rayon_demande_km=10
+    )
+
+    assert http_client.requests == [
+        {
+            "app_id": "app-id",
+            "app_key": "app-key",
+            "what": "administrateur systeme",
+            "where": "Paris",
+            "distance": "10",
+            "results_per_page": "50",
+            "content-type": "application/json",
+        }
+    ]
+    assert len(results) == 1
+    assert results[0].source_name == "Adzuna"
+    assert results[0].source_radius_km == 10
+    assert results[0].title == "Administrateur Systeme Linux"
+    assert results[0].company == "Atelier Hexagone"
+    assert results[0].city == "Paris, Ile-de-France"
+    assert results[0].published_at == "2026-05-10"
+    assert results[0].contract_type == "CDI"
+    assert results[0].salary == "45 000 - 55 000 EUR"
+    assert results[0].description_source == "Administration Linux. Experience 3 ans."
+    assert results[0].source_url == "https://adzuna.example/offre/1"
+    assert results[0].source_identifier == "adzuna-1"
+    assert results[0].result_identity == "Adzuna:adzuna-1"
+
+
+def test_adzuna_connector_paginates_until_configured_max_results() -> None:
+    http_client = FakeAdzunaHttpClient(
+        pages=[
+            {
+                "count": 3,
+                "results": [
+                    {
+                        "id": "adzuna-1",
+                        "title": "Administrateur Systeme 1",
+                        "redirect_url": "https://adzuna.example/offre/1",
+                    },
+                    {
+                        "id": "adzuna-2",
+                        "title": "Administrateur Systeme 2",
+                        "redirect_url": "https://adzuna.example/offre/2",
+                    },
+                ],
+            },
+            {
+                "count": 3,
+                "results": [
+                    {
+                        "id": "adzuna-3",
+                        "title": "Administrateur Systeme 3",
+                        "redirect_url": "https://adzuna.example/offre/3",
+                    }
+                ],
+            },
+        ]
+    )
+    connector = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        results_per_page=2,
+        max_results=3,
+        http_client=http_client,
+    )
+
+    results = connector.search(
+        intitule="Administrateur Systeme", localisation="Paris", rayon_demande_km=10
+    )
+
+    assert len(http_client.requests) == 2
+    assert [result.source_identifier for result in results] == [
+        "adzuna-1",
+        "adzuna-2",
+        "adzuna-3",
+    ]
+
+
+def test_adzuna_connector_handles_missing_optional_fields() -> None:
+    connector = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        http_client=FakeAdzunaHttpClient(
+            pages=[
+                {
+                    "count": 1,
+                    "results": [
+                        {
+                            "id": "adzuna-1",
+                        }
+                    ],
+                }
+            ]
+        ),
+    )
+
+    results = connector.search(
+        intitule="Support", localisation="Rennes", rayon_demande_km=10
+    )
+
+    assert len(results) == 1
+    assert results[0].title == "Intitule non precise"
+    assert results[0].company == "Entreprise non precisee"
+    assert results[0].city == "Rennes"
+    assert results[0].published_at is None
+    assert results[0].contract_type == "Non precise"
+    assert results[0].salary is None
+    assert results[0].description_source is None
+    assert results[0].source_url == "https://www.adzuna.fr/details/adzuna-1"
+
+
+def test_adzuna_source_failure_does_not_fail_session(tmp_path: Path) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    adzuna = AdzunaConnector(
+        app_id="app-id",
+        app_key="app-key",
+        http_client=FakeAdzunaHttpClient(status_code=429),
+    )
+
+    trace = run_search_trace(
+        database_path,
+        intitule="Administrateur systeme",
+        localisation="Paris",
+        rayon_demande_km=10,
+        connectors=[DemoSourceConnector(), adzuna],
+    )
+
+    results = list_offer_results_for_session(database_path, trace.session.id)
+    failures = list_source_failures_for_session(database_path, trace.session.id)
+
+    assert trace.result_count == 5
+    assert trace.failure_count == 1
+    assert results
+    assert failures[0].source_name == "Adzuna"
+    assert "HTTP 429" in failures[0].message
 
 
 def test_france_travail_source_failure_does_not_fail_session(
@@ -383,6 +578,43 @@ def test_france_travail_connector_is_enabled_by_configuration(tmp_path: Path) ->
     assert [connector.source_name for connector in connectors] == [
         "Source demo",
         "France Travail",
+    ]
+
+
+def test_adzuna_connector_is_disabled_by_configuration(tmp_path: Path) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        adzuna_enabled=False,
+        adzuna_app_id=None,
+        adzuna_app_key=None,
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert [connector.source_name for connector in connectors] == ["Source demo"]
+
+
+def test_adzuna_connector_is_enabled_by_configuration(tmp_path: Path) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        adzuna_enabled=True,
+        adzuna_app_id="app-id",
+        adzuna_app_key="app-key",
+        adzuna_results_per_page=50,
+        adzuna_max_results=100,
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert [connector.source_name for connector in connectors] == [
+        "Source demo",
+        "Adzuna",
     ]
 
 

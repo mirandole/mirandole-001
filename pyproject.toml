@@ -29,6 +29,9 @@ packages = ["src/mirandole"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "live_adzuna: live Adzuna API smoke test requiring credentials",
+]
 
 [tool.ruff]
 line-length = 88
