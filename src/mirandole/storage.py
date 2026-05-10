@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from json import dumps, loads
 from pathlib import Path
 
 
@@ -28,6 +29,10 @@ class StoredOfferResult:
     published_at: str | None
     contract_type: str
     salary: str | None
+    description_source: str | None
+    skill_tags: tuple[str, ...]
+    experience_level: str
+    diploma_level: str
     source_url: str
     remote_text: str | None
     inactive: bool
@@ -86,6 +91,10 @@ def initialize_storage(database_path: Path) -> None:
                 published_at TEXT,
                 contract_type TEXT NOT NULL,
                 salary TEXT,
+                description_source TEXT,
+                skill_tags TEXT NOT NULL DEFAULT '[]',
+                experience_level TEXT NOT NULL DEFAULT 'Non precise',
+                diploma_level TEXT NOT NULL DEFAULT 'Non precise',
                 source_url TEXT NOT NULL,
                 remote_text TEXT,
                 inactive INTEGER NOT NULL DEFAULT 0
@@ -102,12 +111,41 @@ def initialize_storage(database_path: Path) -> None:
             )
             """
         )
+        _ensure_column(connection, "offer_results", "description_source", "TEXT")
+        _ensure_column(
+            connection, "offer_results", "skill_tags", "TEXT NOT NULL DEFAULT '[]'"
+        )
+        _ensure_column(
+            connection,
+            "offer_results",
+            "experience_level",
+            "TEXT NOT NULL DEFAULT 'Non precise'",
+        )
+        _ensure_column(
+            connection,
+            "offer_results",
+            "diploma_level",
+            "TEXT NOT NULL DEFAULT 'Non precise'",
+        )
 
 
 def _connect(database_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def _ensure_column(
+    connection: sqlite3.Connection, table_name: str, column_name: str, definition: str
+) -> None:
+    columns = {
+        row[1]
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        connection.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+        )
 
 
 def create_search_session(
@@ -159,11 +197,15 @@ def save_offer_results(
                 published_at,
                 contract_type,
                 salary,
+                description_source,
+                skill_tags,
+                experience_level,
+                diploma_level,
                 source_url,
                 remote_text,
                 inactive
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -177,6 +219,10 @@ def save_offer_results(
                     result.published_at,
                     result.contract_type,
                     result.salary,
+                    result.description_source,
+                    dumps(list(result.skill_tags)),
+                    result.experience_level,
+                    result.diploma_level,
                     result.source_url,
                     result.remote_text,
                     int(result.inactive),
@@ -243,6 +289,10 @@ def list_offer_results_for_session(
                 published_at,
                 contract_type,
                 salary,
+                description_source,
+                skill_tags,
+                experience_level,
+                diploma_level,
                 source_url,
                 remote_text,
                 inactive
@@ -297,6 +347,10 @@ def _stored_offer_result_from_row(row: sqlite3.Row) -> StoredOfferResult:
         published_at=row["published_at"],
         contract_type=row["contract_type"],
         salary=row["salary"],
+        description_source=row["description_source"],
+        skill_tags=tuple(loads(row["skill_tags"])),
+        experience_level=row["experience_level"],
+        diploma_level=row["diploma_level"],
         source_url=row["source_url"],
         remote_text=row["remote_text"],
         inactive=bool(row["inactive"]),

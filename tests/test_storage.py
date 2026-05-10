@@ -42,8 +42,8 @@ def test_search_trace_creates_session_and_persists_results(tmp_path: Path) -> No
     assert sessions[0].intitule == "Developpeur backend"
     assert sessions[0].localisation == "Nantes"
     assert sessions[0].rayon_demande_km == 30
-    assert trace.result_count == 3
-    assert len(results) == 3
+    assert trace.result_count == 5
+    assert len(results) == 5
     assert results[0].source_name == "Source demo"
     assert results[0].result_identity == "Source demo:demo-developpeur-backend-1"
     assert results[0].title == "Developpeur backend Python"
@@ -52,6 +52,9 @@ def test_search_trace_creates_session_and_persists_results(tmp_path: Path) -> No
     assert results[0].published_at == "2026-05-09"
     assert results[0].contract_type == "CDI"
     assert results[0].salary == "45 000 - 55 000 EUR"
+    assert results[0].skill_tags == ("API", "FastAPI", "Python")
+    assert results[0].experience_level == "Avance"
+    assert results[0].diploma_level == "Bac+5"
     assert results[0].source_url == (
         "https://example.test/offres/developpeur-backend-python"
     )
@@ -85,7 +88,9 @@ def test_results_are_sorted_by_freshness_with_unknown_dates_last(
 
     assert [result.published_at for result in results] == [
         "2026-05-09",
+        "2026-05-08",
         "2026-05-07",
+        "2026-05-06",
         None,
     ]
 
