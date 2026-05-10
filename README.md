@@ -36,6 +36,12 @@ Required environment variables:
 - `MIRANDOLE_COOKIE_SECURE`: optional, defaults to `true`. Keep `true` when the
   Application deployee is served over HTTPS. Set `false` only for local HTTP
   development or an explicitly controlled WireGuard-only HTTP deployment.
+- `MIRANDOLE_FRANCE_TRAVAIL_ENABLED`: optional, defaults to `false`. Set `true`
+  to enable the France Travail Connecteur de source.
+- `MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID`: required only when France Travail is
+  enabled.
+- `MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET`: required only when France Travail is
+  enabled. Store the real value in the deployment environment only.
 
 Recommended production command:
 

@@ -361,3 +361,34 @@ def test_invalid_password_configuration_fails(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(ConfigError, match="at least 12 characters"):
         Settings.from_env()
+
+
+def test_france_travail_credentials_are_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("MIRANDOLE_FRANCE_TRAVAIL_ENABLED", "true")
+    monkeypatch.setenv("MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID", "client-id")
+    monkeypatch.setenv("MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET", "client-secret")
+
+    settings = Settings.from_env()
+
+    assert settings.france_travail_enabled is True
+    assert settings.france_travail_client_id == "client-id"
+    assert settings.france_travail_client_secret == "client-secret"
+
+
+def test_enabled_france_travail_requires_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("MIRANDOLE_FRANCE_TRAVAIL_ENABLED", "true")
+    monkeypatch.delenv("MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID", raising=False)
+    monkeypatch.delenv("MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET", raising=False)
+
+    with pytest.raises(ConfigError, match="CLIENT_ID is required"):
+        Settings.from_env()

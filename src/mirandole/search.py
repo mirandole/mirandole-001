@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from json import JSONDecodeError, loads
 from pathlib import Path
+from typing import Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
+from mirandole.config import Settings
 from mirandole.enrichment import enrich_result
 from mirandole.storage import (
     SearchSession,
@@ -18,8 +24,20 @@ from mirandole.storage import (
 RAYONS_DEMANDE_KM = [10, 20, 30, 50, 100]
 
 
-class DemoSourceUnavailable(RuntimeError):
+class SourceConnectorUnavailable(RuntimeError):
     pass
+
+
+class DemoSourceUnavailable(SourceConnectorUnavailable):
+    pass
+
+
+class SourceConnector(Protocol):
+    source_name: str
+
+    def search(
+        self, *, intitule: str, localisation: str, rayon_demande_km: int
+    ) -> list[OfferResult]: ...
 
 
 @dataclass(frozen=True)
@@ -155,13 +173,201 @@ class DemoSourceConnector:
         ]
 
 
+@dataclass(frozen=True)
+class FranceTravailHttpResponse:
+    status_code: int
+    body: bytes
+
+
+class FranceTravailHttpClient:
+    def post_form(
+        self, url: str, data: dict[str, str], headers: dict[str, str]
+    ) -> FranceTravailHttpResponse:
+        encoded_data = urlencode(data).encode()
+        request = Request(url, data=encoded_data, headers=headers, method="POST")
+        return self._send(request)
+
+    def get_json(
+        self, url: str, params: dict[str, str], headers: dict[str, str]
+    ) -> FranceTravailHttpResponse:
+        separator = "&" if "?" in url else "?"
+        request = Request(
+            f"{url}{separator}{urlencode(params)}", headers=headers, method="GET"
+        )
+        return self._send(request)
+
+    def _send(self, request: Request) -> FranceTravailHttpResponse:
+        try:
+            with urlopen(request, timeout=15) as response:
+                return FranceTravailHttpResponse(
+                    status_code=response.status, body=response.read()
+                )
+        except HTTPError as exc:
+            raise SourceConnectorUnavailable(
+                f"France Travail a retourne HTTP {exc.code}."
+            ) from exc
+        except URLError as exc:
+            raise SourceConnectorUnavailable(
+                "France Travail est indisponible."
+            ) from exc
+
+
+class FranceTravailConnector:
+    source_name = "France Travail"
+    token_url = (
+        "https://entreprise.francetravail.fr/connexion/oauth2/access_token"
+        "?realm=/partenaire"
+    )
+    search_url = (
+        "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
+    )
+    scope = "api_offresdemploiv2 o2dsoffre"
+
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        client_secret: str,
+        http_client: FranceTravailHttpClient | None = None,
+    ) -> None:
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.http_client = http_client or FranceTravailHttpClient()
+
+    def map_rayon_source(self, rayon_demande_km: int) -> int:
+        return rayon_demande_km
+
+    def search(
+        self, *, intitule: str, localisation: str, rayon_demande_km: int
+    ) -> list[OfferResult]:
+        rayon_source_km = self.map_rayon_source(rayon_demande_km)
+        access_token = self._fetch_access_token()
+        response = self.http_client.get_json(
+            self.search_url,
+            params={
+                "motsCles": intitule,
+                "lieu": localisation,
+                "distance": str(rayon_source_km),
+            },
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
+            },
+        )
+        if response.status_code >= 400:
+            raise SourceConnectorUnavailable(
+                f"France Travail a retourne HTTP {response.status_code}."
+            )
+
+        payload = _decode_json_payload(response.body, source_name=self.source_name)
+        raw_results = payload.get("resultats", [])
+        if not isinstance(raw_results, list):
+            raise SourceConnectorUnavailable(
+                "France Travail a retourne un format inattendu."
+            )
+
+        return [
+            self._normalize_offer(
+                raw_offer,
+                localisation=localisation,
+                rayon_source_km=rayon_source_km,
+            )
+            for raw_offer in raw_results
+            if isinstance(raw_offer, dict)
+        ]
+
+    def _fetch_access_token(self) -> str:
+        response = self.http_client.post_form(
+            self.token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "scope": self.scope,
+            },
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        if response.status_code >= 400:
+            raise SourceConnectorUnavailable(
+                f"France Travail auth a retourne HTTP {response.status_code}."
+            )
+
+        payload = _decode_json_payload(response.body, source_name=self.source_name)
+        access_token = payload.get("access_token")
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise SourceConnectorUnavailable(
+                "France Travail auth n'a pas retourne de jeton d'acces."
+            )
+        return access_token
+
+    def _normalize_offer(
+        self,
+        raw_offer: dict[str, object],
+        *,
+        localisation: str,
+        rayon_source_km: int,
+    ) -> OfferResult:
+        source_identifier = _string_value(raw_offer.get("id"))
+        source_url = (
+            _nested_string(raw_offer, "origineOffre", "urlOrigine")
+            or _nested_string(raw_offer, "origineOffre", "url")
+            or _france_travail_offer_url(source_identifier)
+        )
+        return OfferResult(
+            source_name=self.source_name,
+            source_radius_km=rayon_source_km,
+            title=(
+                _string_value(raw_offer.get("intitule"))
+                or _string_value(raw_offer.get("appellationlibelle"))
+                or "Intitule non precise"
+            ),
+            company=(
+                _nested_string(raw_offer, "entreprise", "nom")
+                or "Entreprise non precisee"
+            ),
+            city=(
+                _nested_string(raw_offer, "lieuTravail", "libelle")
+                or _nested_string(raw_offer, "lieuTravail", "commune")
+                or localisation
+            ),
+            published_at=_date_value(raw_offer.get("dateCreation")),
+            contract_type=_normalize_contract_type(
+                _string_value(raw_offer.get("typeContrat"))
+                or _string_value(raw_offer.get("typeContratLibelle"))
+            ),
+            salary=_nested_string(raw_offer, "salaire", "libelle"),
+            description_source=_string_value(raw_offer.get("description")),
+            source_url=source_url,
+            source_identifier=source_identifier,
+            remote_text=_string_value(raw_offer.get("deplacementLibelle")),
+        )
+
+
+def build_source_connectors(settings: Settings) -> list[SourceConnector]:
+    connectors: list[SourceConnector] = [DemoSourceConnector()]
+    if settings.france_travail_enabled:
+        assert settings.france_travail_client_id is not None
+        assert settings.france_travail_client_secret is not None
+        connectors.append(
+            FranceTravailConnector(
+                client_id=settings.france_travail_client_id,
+                client_secret=settings.france_travail_client_secret,
+            )
+        )
+    return connectors
+
+
 def run_search_trace(
     database_path: Path,
     *,
     intitule: str,
     localisation: str,
     rayon_demande_km: int,
-    connector: DemoSourceConnector | None = None,
+    connector: SourceConnector | None = None,
+    connectors: list[SourceConnector] | None = None,
 ) -> SearchTrace:
     session = create_search_session(
         database_path,
@@ -169,22 +375,30 @@ def run_search_trace(
         localisation=localisation.strip(),
         rayon_demande_km=rayon_demande_km,
     )
-    source_connector = connector or DemoSourceConnector()
+    source_connectors = connectors or [connector or DemoSourceConnector()]
 
-    try:
-        results = source_connector.search(
-            intitule=session.intitule,
-            localisation=session.localisation,
-            rayon_demande_km=session.rayon_demande_km,
-        )
-    except DemoSourceUnavailable as exc:
-        save_source_failure(
-            database_path,
-            session_id=session.id,
-            source_name=source_connector.source_name,
-            message=str(exc),
-        )
-        return SearchTrace(session=session, result_count=0, failure_count=1)
+    results: list[OfferResult] = []
+    failure_count = 0
+    successful_source_names: set[str] = set()
+    for source_connector in source_connectors:
+        try:
+            source_results = source_connector.search(
+                intitule=session.intitule,
+                localisation=session.localisation,
+                rayon_demande_km=session.rayon_demande_km,
+            )
+        except SourceConnectorUnavailable as exc:
+            failure_count += 1
+            save_source_failure(
+                database_path,
+                session_id=session.id,
+                source_name=source_connector.source_name,
+                message=str(exc),
+            )
+            continue
+
+        results.extend(source_results)
+        successful_source_names.add(source_connector.source_name)
 
     previous_session = find_previous_session_for_same_recherche(
         database_path,
@@ -217,10 +431,12 @@ def run_search_trace(
         database_path,
         session_id=session.id,
         recherche=session,
-        successful_source_names={source_connector.source_name},
+        successful_source_names=successful_source_names,
         active_result_identities=active_result_identities,
     )
-    return SearchTrace(session=session, result_count=len(results), failure_count=0)
+    return SearchTrace(
+        session=session, result_count=len(results), failure_count=failure_count
+    )
 
 
 def _stored_result_from_offer_result(
@@ -264,3 +480,68 @@ def _canonicalize_source_url(source_url: str) -> str:
 def _slugify(value: str) -> str:
     slug = "-".join(value.casefold().split())
     return slug or "recherche"
+
+
+def _decode_json_payload(body: bytes, *, source_name: str) -> dict[str, object]:
+    try:
+        payload = loads(body.decode())
+    except (UnicodeDecodeError, JSONDecodeError) as exc:
+        raise SourceConnectorUnavailable(
+            f"{source_name} a retourne une reponse illisible."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise SourceConnectorUnavailable(
+            f"{source_name} a retourne un format inattendu."
+        )
+    return payload
+
+
+def _string_value(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _nested_string(
+    payload: dict[str, object], parent_key: str, child_key: str
+) -> str | None:
+    parent = payload.get(parent_key)
+    if not isinstance(parent, dict):
+        return None
+    return _string_value(parent.get(child_key))
+
+
+def _date_value(value: object) -> str | None:
+    raw_value = _string_value(value)
+    if raw_value is None:
+        return None
+    return raw_value[:10]
+
+
+def _france_travail_offer_url(source_identifier: str | None) -> str:
+    if source_identifier is None:
+        return "https://candidat.francetravail.fr/offres/recherche"
+    return (
+        f"https://candidat.francetravail.fr/offres/recherche/detail/{source_identifier}"
+    )
+
+
+def _normalize_contract_type(value: str | None) -> str:
+    if value is None:
+        return "Non precise"
+
+    normalized_value = value.casefold()
+    if "cdi" in normalized_value or "indeterminee" in normalized_value:
+        return "CDI"
+    if "cdd" in normalized_value or "determinee" in normalized_value:
+        return "CDD"
+    if "interim" in normalized_value or "intérim" in normalized_value:
+        return "Interim"
+    if "freelance" in normalized_value or "independant" in normalized_value:
+        return "Freelance"
+    if "stage" in normalized_value:
+        return "Stage"
+    if "alternance" in normalized_value or "apprentissage" in normalized_value:
+        return "Alternance"
+    return value
