@@ -136,6 +136,9 @@ def test_utilisateur_principal_can_submit_recherche_offres(
     assert "Identite de resultat Source demo:demo-developpeur-backend-1" in (
         response.text
     )
+    assert 'href="/offer-results/1/open"' in response.text
+    assert 'target="_blank"' in response.text
+    assert 'rel="external noopener noreferrer"' in response.text
     assert "Rayon source 50 km" in response.text
     assert "Developpeur backend Stage web" not in response.text
     assert "Developpeur backend Alternance cloud" not in response.text
@@ -312,6 +315,9 @@ def test_favorite_toggle_persists_and_vue_favoris_lists_offres_favorites(
     assert favorites_response.status_code == 200
     assert "Vue favoris" in favorites_response.text
     assert "Developpeur backend Python" in favorites_response.text
+    assert 'href="/offer-results/1/open"' in favorites_response.text
+    assert 'target="_blank"' in favorites_response.text
+    assert 'rel="external noopener noreferrer"' in favorites_response.text
     assert "Ajoutee aux Offres favorites" in favorites_response.text
     assert "Developpeur backend Data" not in favorites_response.text
 
