@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from json import JSONDecodeError, loads
 from pathlib import Path
@@ -22,6 +23,12 @@ from mirandole.storage import (
 )
 
 RAYONS_DEMANDE_KM = [10, 20, 30, 50, 100]
+
+
+@dataclass(frozen=True)
+class FranceTravailLocationCriteria:
+    parameter_name: str
+    value: str
 
 
 class SourceConnectorUnavailable(RuntimeError):
@@ -221,6 +228,7 @@ class FranceTravailConnector:
     search_url = (
         "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
     )
+    geocoding_url = "https://geo.api.gouv.fr/communes"
     scope = "api_offresdemploiv2 o2dsoffre"
 
     def __init__(
@@ -242,11 +250,12 @@ class FranceTravailConnector:
     ) -> list[OfferResult]:
         rayon_source_km = self.map_rayon_source(rayon_demande_km)
         access_token = self._fetch_access_token()
+        location_criteria = self._resolve_location_criteria(localisation)
         response = self.http_client.get_json(
             self.search_url,
             params={
                 "motsCles": intitule,
-                "lieu": localisation,
+                location_criteria.parameter_name: location_criteria.value,
                 "distance": str(rayon_source_km),
             },
             headers={
@@ -275,6 +284,57 @@ class FranceTravailConnector:
             for raw_offer in raw_results
             if isinstance(raw_offer, dict)
         ]
+
+    def _resolve_location_criteria(
+        self, localisation: str
+    ) -> FranceTravailLocationCriteria:
+        explicit_postal_code = _extract_postal_code(localisation)
+        if explicit_postal_code is not None:
+            return FranceTravailLocationCriteria(
+                parameter_name="codePostal", value=explicit_postal_code
+            )
+
+        response = self.http_client.get_json(
+            self.geocoding_url,
+            params={
+                "nom": localisation.strip(),
+                "fields": "code,codesPostaux,nom",
+                "boost": "population",
+                "limit": "1",
+            },
+            headers={"Accept": "application/json"},
+        )
+        if response.status_code >= 400:
+            raise SourceConnectorUnavailable(
+                f"France Travail n'a pas pu resoudre la localisation "
+                f"{localisation.strip()}."
+            )
+
+        payload = _decode_json_value(response.body, source_name=self.source_name)
+        if not isinstance(payload, list) or not payload:
+            raise SourceConnectorUnavailable(
+                f"France Travail n'a pas reconnu la localisation "
+                f"{localisation.strip()}."
+            )
+
+        first_result = payload[0]
+        if not isinstance(first_result, dict):
+            raise SourceConnectorUnavailable(
+                "France Travail a retourne un referentiel de localisation inattendu."
+            )
+        postal_code = _first_string_value(first_result.get("codesPostaux"))
+        if postal_code is not None:
+            return FranceTravailLocationCriteria(
+                parameter_name="codePostal", value=postal_code
+            )
+        commune_code = _string_value(first_result.get("code"))
+        if commune_code is None:
+            raise SourceConnectorUnavailable(
+                "France Travail a retourne une commune sans code postal ni code."
+            )
+        return FranceTravailLocationCriteria(
+            parameter_name="commune", value=commune_code
+        )
 
     def _fetch_access_token(self) -> str:
         response = self.http_client.post_form(
@@ -482,13 +542,17 @@ def _slugify(value: str) -> str:
     return slug or "recherche"
 
 
-def _decode_json_payload(body: bytes, *, source_name: str) -> dict[str, object]:
+def _decode_json_value(body: bytes, *, source_name: str) -> object:
     try:
-        payload = loads(body.decode())
+        return loads(body.decode())
     except (UnicodeDecodeError, JSONDecodeError) as exc:
         raise SourceConnectorUnavailable(
             f"{source_name} a retourne une reponse illisible."
         ) from exc
+
+
+def _decode_json_payload(body: bytes, *, source_name: str) -> dict[str, object]:
+    payload = _decode_json_value(body, source_name=source_name)
     if not isinstance(payload, dict):
         raise SourceConnectorUnavailable(
             f"{source_name} a retourne un format inattendu."
@@ -501,6 +565,23 @@ def _string_value(value: object) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _first_string_value(value: object) -> str | None:
+    if not isinstance(value, list):
+        return None
+    for item in value:
+        string_item = _string_value(item)
+        if string_item is not None:
+            return string_item
+    return None
+
+
+def _extract_postal_code(value: str) -> str | None:
+    match = re.search(r"\b\d{5}\b", value.strip())
+    if match is None:
+        return None
+    return match.group(0)
 
 
 def _nested_string(
