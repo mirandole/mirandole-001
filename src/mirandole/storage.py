@@ -17,6 +17,16 @@ class SearchSession:
 
 
 @dataclass(frozen=True)
+class RecentSearch:
+    id: int
+    intitule: str
+    localisation: str
+    rayon_demande_km: int
+    last_session_id: int
+    last_used_at: str
+
+
+@dataclass(frozen=True)
 class StoredOfferResult:
     id: int
     session_id: int
@@ -35,6 +45,7 @@ class StoredOfferResult:
     diploma_level: str
     source_url: str
     remote_text: str | None
+    is_new: bool
     inactive: bool
     consulted_at: str | None = None
     favorite_at: str | None = None
@@ -81,6 +92,19 @@ def initialize_storage(database_path: Path) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS recent_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intitule TEXT NOT NULL,
+                localisation TEXT NOT NULL,
+                rayon_demande_km INTEGER NOT NULL,
+                normalized_key TEXT NOT NULL UNIQUE,
+                last_session_id INTEGER NOT NULL REFERENCES search_sessions(id),
+                last_used_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS offer_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id INTEGER NOT NULL REFERENCES search_sessions(id),
@@ -99,6 +123,7 @@ def initialize_storage(database_path: Path) -> None:
                 diploma_level TEXT NOT NULL DEFAULT 'Non precise',
                 source_url TEXT NOT NULL,
                 remote_text TEXT,
+                is_new INTEGER NOT NULL DEFAULT 0,
                 inactive INTEGER NOT NULL DEFAULT 0
             )
             """
@@ -137,6 +162,9 @@ def initialize_storage(database_path: Path) -> None:
             "offer_results",
             "diploma_level",
             "TEXT NOT NULL DEFAULT 'Non precise'",
+        )
+        _ensure_column(
+            connection, "offer_results", "is_new", "INTEGER NOT NULL DEFAULT 0"
         )
 
 
@@ -178,6 +206,14 @@ def create_search_session(
             (intitule, localisation, rayon_demande_km, created_at),
         )
         session_id = int(cursor.lastrowid)
+        _upsert_recent_search(
+            connection,
+            intitule=intitule,
+            localisation=localisation,
+            rayon_demande_km=rayon_demande_km,
+            last_session_id=session_id,
+            last_used_at=created_at,
+        )
 
     return SearchSession(
         id=session_id,
@@ -185,6 +221,73 @@ def create_search_session(
         localisation=localisation,
         rayon_demande_km=rayon_demande_km,
         created_at=created_at,
+    )
+
+
+def _upsert_recent_search(
+    connection: sqlite3.Connection,
+    *,
+    intitule: str,
+    localisation: str,
+    rayon_demande_km: int,
+    last_session_id: int,
+    last_used_at: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO recent_searches (
+            intitule,
+            localisation,
+            rayon_demande_km,
+            normalized_key,
+            last_session_id,
+            last_used_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(normalized_key) DO UPDATE SET
+            intitule = excluded.intitule,
+            localisation = excluded.localisation,
+            rayon_demande_km = excluded.rayon_demande_km,
+            last_session_id = excluded.last_session_id,
+            last_used_at = excluded.last_used_at
+        """,
+        (
+            intitule,
+            localisation,
+            rayon_demande_km,
+            _recent_search_key(
+                intitule=intitule,
+                localisation=localisation,
+                rayon_demande_km=rayon_demande_km,
+            ),
+            last_session_id,
+            last_used_at,
+        ),
+    )
+    old_rows = connection.execute(
+        """
+        SELECT id
+        FROM recent_searches
+        ORDER BY last_session_id DESC
+        LIMIT -1 OFFSET 10
+        """
+    ).fetchall()
+    if old_rows:
+        connection.executemany(
+            "DELETE FROM recent_searches WHERE id = ?",
+            [(row["id"],) for row in old_rows],
+        )
+
+
+def _recent_search_key(
+    *, intitule: str, localisation: str, rayon_demande_km: int
+) -> str:
+    return "|".join(
+        (
+            " ".join(intitule.casefold().split()),
+            " ".join(localisation.casefold().split()),
+            str(rayon_demande_km),
+        )
     )
 
 
@@ -214,9 +317,10 @@ def save_offer_results(
                 diploma_level,
                 source_url,
                 remote_text,
+                is_new,
                 inactive
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -236,9 +340,180 @@ def save_offer_results(
                     result.diploma_level,
                     result.source_url,
                     result.remote_text,
+                    int(result.is_new),
                     int(result.inactive),
                 )
                 for result in results
+            ],
+        )
+
+
+def find_previous_session_for_same_recherche(
+    database_path: Path,
+    *,
+    session_id: int,
+    intitule: str,
+    localisation: str,
+    rayon_demande_km: int,
+) -> SearchSession | None:
+    with _connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, intitule, localisation, rayon_demande_km, created_at
+            FROM search_sessions
+            WHERE id < ?
+              AND lower(intitule) = lower(?)
+              AND lower(localisation) = lower(?)
+              AND rayon_demande_km = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (session_id, intitule, localisation, rayon_demande_km),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return SearchSession(
+        id=row["id"],
+        intitule=row["intitule"],
+        localisation=row["localisation"],
+        rayon_demande_km=row["rayon_demande_km"],
+        created_at=row["created_at"],
+    )
+
+
+def list_result_identities_for_session(
+    database_path: Path, session_id: int
+) -> set[str]:
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT result_identity
+            FROM offer_results
+            WHERE session_id = ?
+              AND inactive = 0
+            """,
+            (session_id,),
+        ).fetchall()
+
+    return {row["result_identity"] for row in rows}
+
+
+def save_inactive_offer_results_for_missing_identities(
+    database_path: Path,
+    *,
+    session_id: int,
+    recherche: SearchSession,
+    successful_source_names: set[str],
+    active_result_identities: set[str],
+) -> None:
+    if not successful_source_names:
+        return
+
+    with _connect(database_path) as connection:
+        placeholders = ", ".join("?" for _ in successful_source_names)
+        rows = connection.execute(
+            f"""
+            SELECT
+                latest_offer_results.id,
+                latest_offer_results.session_id,
+                latest_offer_results.source_name,
+                latest_offer_results.source_radius_km,
+                latest_offer_results.result_identity,
+                latest_offer_results.title,
+                latest_offer_results.company,
+                latest_offer_results.city,
+                latest_offer_results.published_at,
+                latest_offer_results.contract_type,
+                latest_offer_results.salary,
+                latest_offer_results.description_source,
+                latest_offer_results.skill_tags,
+                latest_offer_results.experience_level,
+                latest_offer_results.diploma_level,
+                latest_offer_results.source_url,
+                latest_offer_results.remote_text,
+                latest_offer_results.is_new,
+                latest_offer_results.inactive,
+                NULL AS consulted_at,
+                NULL AS favorite_at
+            FROM offer_results AS latest_offer_results
+            INNER JOIN (
+                SELECT offer_results.result_identity, MAX(offer_results.id) AS id
+                FROM offer_results
+                INNER JOIN search_sessions
+                    ON search_sessions.id = offer_results.session_id
+                WHERE search_sessions.id < ?
+                  AND lower(search_sessions.intitule) = lower(?)
+                  AND lower(search_sessions.localisation) = lower(?)
+                  AND search_sessions.rayon_demande_km = ?
+                  AND offer_results.source_name IN ({placeholders})
+                GROUP BY offer_results.result_identity
+            ) AS latest_ids
+                ON latest_ids.id = latest_offer_results.id
+            WHERE latest_offer_results.inactive = 0
+            """,
+            (
+                session_id,
+                recherche.intitule,
+                recherche.localisation,
+                recherche.rayon_demande_km,
+                *successful_source_names,
+            ),
+        ).fetchall()
+
+        missing_results = [
+            _stored_offer_result_from_row(row)
+            for row in rows
+            if row["result_identity"] not in active_result_identities
+        ]
+        if not missing_results:
+            return
+
+        connection.executemany(
+            """
+            INSERT INTO offer_results (
+                session_id,
+                source_name,
+                source_radius_km,
+                result_identity,
+                title,
+                company,
+                city,
+                published_at,
+                contract_type,
+                salary,
+                description_source,
+                skill_tags,
+                experience_level,
+                diploma_level,
+                source_url,
+                remote_text,
+                is_new,
+                inactive
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1)
+            """,
+            [
+                (
+                    session_id,
+                    result.source_name,
+                    result.source_radius_km,
+                    result.result_identity,
+                    result.title,
+                    result.company,
+                    result.city,
+                    result.published_at,
+                    result.contract_type,
+                    result.salary,
+                    result.description_source,
+                    dumps(list(result.skill_tags)),
+                    result.experience_level,
+                    result.diploma_level,
+                    result.source_url,
+                    result.remote_text,
+                )
+                for result in missing_results
             ],
         )
 
@@ -282,6 +557,37 @@ def list_search_sessions(database_path: Path) -> list[SearchSession]:
     ]
 
 
+def list_recent_searches(database_path: Path, *, limit: int = 10) -> list[RecentSearch]:
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                intitule,
+                localisation,
+                rayon_demande_km,
+                last_session_id,
+                last_used_at
+            FROM recent_searches
+            ORDER BY last_session_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    return [
+        RecentSearch(
+            id=row["id"],
+            intitule=row["intitule"],
+            localisation=row["localisation"],
+            rayon_demande_km=row["rayon_demande_km"],
+            last_session_id=row["last_session_id"],
+            last_used_at=row["last_used_at"],
+        )
+        for row in rows
+    ]
+
+
 def list_offer_results_for_session(
     database_path: Path, session_id: int
 ) -> list[StoredOfferResult]:
@@ -306,6 +612,7 @@ def list_offer_results_for_session(
                 offer_results.diploma_level,
                 offer_results.source_url,
                 offer_results.remote_text,
+                offer_results.is_new,
                 offer_results.inactive,
                 offer_user_states.consulted_at,
                 offer_user_states.favorite_at
@@ -423,6 +730,7 @@ def list_favorite_offer_results(
                 latest_offer_results.diploma_level,
                 latest_offer_results.source_url,
                 latest_offer_results.remote_text,
+                latest_offer_results.is_new,
                 latest_offer_results.inactive,
                 offer_user_states.consulted_at,
                 offer_user_states.favorite_at
@@ -488,6 +796,7 @@ def _stored_offer_result_from_row(row: sqlite3.Row) -> StoredOfferResult:
         diploma_level=row["diploma_level"],
         source_url=row["source_url"],
         remote_text=row["remote_text"],
+        is_new=bool(row["is_new"]),
         inactive=bool(row["inactive"]),
         consulted_at=row["consulted_at"],
         favorite_at=row["favorite_at"],

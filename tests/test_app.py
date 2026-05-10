@@ -141,6 +141,42 @@ def test_utilisateur_principal_can_submit_recherche_offres(
     assert "Developpeur backend Alternance cloud" not in response.text
 
 
+def test_home_displays_recent_searches_without_duplicates(tmp_path: Path) -> None:
+    app = create_app(make_settings(tmp_path / "app.sqlite3"))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        for index in range(11):
+            client.post(
+                "/",
+                data={
+                    "intitule": f"Developpeur {index}",
+                    "localisation": "Nantes",
+                    "rayon_demande_km": "20",
+                },
+                follow_redirects=False,
+            )
+        response = client.post(
+            "/",
+            data={
+                "intitule": "Developpeur 1",
+                "localisation": "Nantes",
+                "rayon_demande_km": "20",
+            },
+            follow_redirects=True,
+        )
+
+    assert response.status_code == 200
+    assert "Recherches recentes" in response.text
+    assert "Derniere Session de recherche #12" in response.text
+    assert response.text.count('value="Developpeur 1"') == 1
+    assert 'value="Developpeur 0"' not in response.text
+
+
 def test_filtres_de_resultats_are_applied_after_aggregation(
     tmp_path: Path,
 ) -> None:

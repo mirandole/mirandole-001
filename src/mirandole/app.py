@@ -27,6 +27,7 @@ from mirandole.storage import (
     initialize_storage,
     list_favorite_offer_results,
     list_offer_results_for_session,
+    list_recent_searches,
     list_search_sessions,
     list_source_failures_for_session,
     mark_offer_result_consulted,
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             diploma_levels=diploma_level,
         )
         sessions = list_search_sessions(current_settings.database_path)
+        recent_searches = list_recent_searches(current_settings.database_path)
         selected_session = _select_session(sessions, session_id)
         results = []
         failures = []
@@ -118,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "rayons_demande_km": RAYONS_DEMANDE_KM,
                 "selected_session": selected_session,
                 "sessions": sessions,
+                "recent_searches": recent_searches,
                 "results": results,
                 "filters": result_filters,
                 "contract_filter_options": DEFAULT_INCLUDED_CONTRACT_TYPES
@@ -141,6 +144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> HTMLResponse | RedirectResponse:
         if rayon_demande_km not in RAYONS_DEMANDE_KM:
             sessions = list_search_sessions(current_settings.database_path)
+            recent_searches = list_recent_searches(current_settings.database_path)
             return templates.TemplateResponse(
                 request,
                 "home.html",
@@ -149,6 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "rayons_demande_km": RAYONS_DEMANDE_KM,
                     "selected_session": sessions[0] if sessions else None,
                     "sessions": sessions,
+                    "recent_searches": recent_searches,
                     "results": [],
                     "filters": ResultFilters(),
                     "contract_filter_options": DEFAULT_INCLUDED_CONTRACT_TYPES
