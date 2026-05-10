@@ -1,15 +1,140 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="panel" aria-labelledby="page-title">
-  <h1 id="page-title">Recherche d'offres d'emploi</h1>
-  <p>
-    L'Application deployee est prete pour l'Utilisateur principal. Les prochaines
-    tranches ajouteront les Recherches d'offres, les Sessions de recherche et le
-    Stockage applicatif des Resultats d'offre.
-  </p>
-  <form method="post" action="/logout" class="actions">
-    <button type="submit">Se deconnecter</button>
-  </form>
-</section>
+<div class="stack">
+  <section class="panel" aria-labelledby="page-title">
+    <h1 id="page-title">Recherche d'offres d'emploi</h1>
+    <form method="post" action="/">
+      {% if form_error %}
+        <p class="error">{{ form_error }}</p>
+      {% endif %}
+      <div class="field-grid">
+        <div>
+          <label for="intitule">Intitule</label>
+          <input id="intitule" name="intitule" required autocomplete="off">
+        </div>
+        <div>
+          <label for="localisation">Localisation</label>
+          <input id="localisation" name="localisation" required autocomplete="off">
+        </div>
+        <div>
+          <label for="rayon_demande_km">Rayon demande</label>
+          <select id="rayon_demande_km" name="rayon_demande_km" required>
+            {% for radius in rayons_demande_km %}
+              <option value="{{ radius }}">{{ radius }} km</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="submit">Lancer la recherche</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="results-title">
+    <h1 id="results-title">Resultats d'offre</h1>
+    {% if selected_session %}
+      <p class="meta">
+        Session de recherche #{{ selected_session.id }}:
+        {{ selected_session.intitule }} a {{ selected_session.localisation }},
+        rayon demande {{ selected_session.rayon_demande_km }} km.
+      </p>
+
+      {% for failure in failures %}
+        <p class="failure">
+          Echec de source - {{ failure.source_name }}: {{ failure.message }}
+        </p>
+      {% endfor %}
+
+      <form method="get" action="/" class="filter-form">
+        <input type="hidden" name="session_id" value="{{ selected_session.id }}">
+        <fieldset>
+          <legend>Type de contrat recherche</legend>
+          {% for option in contract_filter_options %}
+            <label class="choice">
+              <input
+                type="checkbox"
+                name="contract_type"
+                value="{{ option }}"
+                {% if option in filters.contract_types %}checked{% endif %}
+              >
+              {{ option }}
+            </label>
+          {% endfor %}
+        </fieldset>
+        <fieldset>
+          <legend>Niveau d'experience demande</legend>
+          {% for option in experience_filter_options %}
+            <label class="choice">
+              <input
+                type="checkbox"
+                name="experience_level"
+                value="{{ option }}"
+                {% if option in filters.experience_levels %}checked{% endif %}
+              >
+              {{ option }}
+            </label>
+          {% endfor %}
+        </fieldset>
+        <fieldset>
+          <legend>Niveau de diplome demande</legend>
+          {% for option in diploma_filter_options %}
+            <label class="choice">
+              <input
+                type="checkbox"
+                name="diploma_level"
+                value="{{ option }}"
+                {% if option in filters.diploma_levels %}checked{% endif %}
+              >
+              {{ option }}
+            </label>
+          {% endfor %}
+        </fieldset>
+        <div class="actions compact">
+          <button type="submit">Appliquer les filtres</button>
+        </div>
+      </form>
+
+      {% if results %}
+        <ul class="results">
+          {% for result in results %}
+            <li class="result-card">
+              <h2><a href="{{ result.source_url }}">{{ result.title }}</a></h2>
+              <p class="meta">
+                {{ result.company }} - {{ result.city }} - {{ result.contract_type }}
+                {% if result.published_at %}- {{ result.published_at }}{% else %}- Date de publication non precisee{% endif %}
+              </p>
+              <p class="meta">
+                {{ result.source_name }} - Identite de resultat {{ result.result_identity }}
+                - Rayon source {{ result.source_radius_km }} km
+              </p>
+              <p class="meta">
+                Niveau d'experience demande: {{ result.experience_level }} -
+                Niveau de diplome demande: {{ result.diploma_level }}
+              </p>
+              {% if result.skill_tags %}
+                <p class="meta">Tags de competence: {{ result.skill_tags | join(", ") }}</p>
+              {% endif %}
+              {% if result.salary %}
+                <p class="meta">Remuneration indiquee: {{ result.salary }}</p>
+              {% endif %}
+              {% if result.remote_text %}
+                <p class="meta">{{ result.remote_text }}</p>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>Aucun Resultat d'offre pour cette Session de recherche.</p>
+      {% endif %}
+    {% else %}
+      <p>Aucune Session de recherche lancee.</p>
+    {% endif %}
+
+    <form method="post" action="/logout" class="actions">
+      <button type="submit">Se deconnecter</button>
+    </form>
+  </section>
+</div>
 {% endblock %}

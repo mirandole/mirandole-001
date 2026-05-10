@@ -41,6 +41,8 @@ def test_utilisateur_principal_can_login_and_access_home(tmp_path: Path) -> None
     assert login_response.headers["location"] == "/"
     assert home_response.status_code == 200
     assert "Recherche d'offres d'emploi" in home_response.text
+    assert "Rayon demande" in home_response.text
+    assert "100 km" in home_response.text
 
 
 def test_invalid_password_keeps_access_protected(tmp_path: Path) -> None:
@@ -99,6 +101,107 @@ def test_sqlite_stockage_applicatif_is_initialized(tmp_path: Path) -> None:
         pass
 
     assert database_path.exists()
+
+
+def test_utilisateur_principal_can_submit_recherche_offres(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_settings(tmp_path / "app.sqlite3"))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        response = client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=True,
+        )
+
+    assert response.status_code == 200
+    assert "Session de recherche #1" in response.text
+    assert "Developpeur backend Python" in response.text
+    assert "Atelier Hexagone" in response.text
+    assert "Tags de competence: API, FastAPI, Python" in response.text
+    assert "Niveau d'experience demande: Avance" in response.text
+    assert "Niveau de diplome demande: Bac+5" in response.text
+    assert "Remuneration indiquee: 45 000 - 55 000 EUR" in response.text
+    assert "Teletravail partiel" in response.text
+    assert "Identite de resultat Source demo:demo-developpeur-backend-1" in (
+        response.text
+    )
+    assert "Rayon source 50 km" in response.text
+    assert "Developpeur backend Stage web" not in response.text
+    assert "Developpeur backend Alternance cloud" not in response.text
+
+
+def test_filtres_de_resultats_are_applied_after_aggregation(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_settings(tmp_path / "app.sqlite3"))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        response = client.get(
+            "/",
+            params={
+                "session_id": "1",
+                "contract_type": "Stage",
+                "experience_level": "Non precise",
+                "diploma_level": "Bac+2",
+            },
+        )
+
+    assert response.status_code == 200
+    assert "Developpeur backend Stage web" in response.text
+    assert "Developpeur backend Python" not in response.text
+    assert "Remuneration indiquee" not in response.text
+
+
+def test_echec_de_source_is_visible_without_failing_session(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_settings(tmp_path / "app.sqlite3"))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        response = client.post(
+            "/",
+            data={
+                "intitule": "Echec source",
+                "localisation": "Nantes",
+                "rayon_demande_km": "20",
+            },
+            follow_redirects=True,
+        )
+
+    assert response.status_code == 200
+    assert "Session de recherche #1" in response.text
+    assert "Echec de source - Source demo" in response.text
+    assert "Aucun Resultat d'offre" in response.text
 
 
 def test_missing_password_configuration_fails(monkeypatch: pytest.MonkeyPatch) -> None:
