@@ -18,7 +18,7 @@ HEAD="$(
 )"
 
 ISSUE="$(
-  echo "$HEAD" | sed -n 's#agent/issue-\([0-9][0-9]*\)-.*#\1#p'
+  echo "$HEAD" | sed -n 's#.*issue-\([0-9][0-9]*\).*#\1#p'
 )"
 
 WT="$(
