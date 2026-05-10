@@ -8,6 +8,9 @@ from mirandole.storage import (
     SearchSession,
     StoredOfferResult,
     create_search_session,
+    find_previous_session_for_same_recherche,
+    list_result_identities_for_session,
+    save_inactive_offer_results_for_missing_identities,
     save_offer_results,
     save_source_failure,
 )
@@ -23,7 +26,6 @@ class DemoSourceUnavailable(RuntimeError):
 class OfferResult:
     source_name: str
     source_radius_km: int
-    result_identity: str
     title: str
     company: str
     city: str
@@ -32,7 +34,16 @@ class OfferResult:
     salary: str | None
     description_source: str | None
     source_url: str
+    source_identifier: str | None = None
     remote_text: str | None = None
+
+    @property
+    def result_identity(self) -> str:
+        return build_result_identity(
+            source_name=self.source_name,
+            source_url=self.source_url,
+            source_identifier=self.source_identifier,
+        )
 
 
 @dataclass(frozen=True)
@@ -69,7 +80,6 @@ class DemoSourceConnector:
             OfferResult(
                 source_name=self.source_name,
                 source_radius_km=rayon_source_km,
-                result_identity=f"{self.source_name}:demo-{source_slug}-1",
                 title=f"{title} Python",
                 company="Atelier Hexagone",
                 city=city,
@@ -81,12 +91,12 @@ class DemoSourceConnector:
                     "Bac+5 apprecie."
                 ),
                 source_url=f"https://example.test/offres/{source_slug}-python",
+                source_identifier=f"demo-{source_slug}-1",
                 remote_text="Teletravail partiel",
             ),
             OfferResult(
                 source_name=self.source_name,
                 source_radius_km=rayon_source_km,
-                result_identity=f"{self.source_name}:demo-{source_slug}-2",
                 title=f"{title} Data",
                 company="Cooperative Loire",
                 city=city,
@@ -98,11 +108,11 @@ class DemoSourceConnector:
                     "avec Bac+3."
                 ),
                 source_url=f"https://example.test/offres/{source_slug}-data",
+                source_identifier=f"demo-{source_slug}-2",
             ),
             OfferResult(
                 source_name=self.source_name,
                 source_radius_km=rayon_source_km,
-                result_identity=f"{self.source_name}:demo-{source_slug}-3",
                 title=f"{title} Support applicatif",
                 company="Service Numerique Ouest",
                 city=city,
@@ -114,11 +124,11 @@ class DemoSourceConnector:
                     "experience acceptee."
                 ),
                 source_url=f"https://example.test/offres/{source_slug}-support",
+                source_identifier=f"demo-{source_slug}-3",
             ),
             OfferResult(
                 source_name=self.source_name,
                 source_radius_km=rayon_source_km,
-                result_identity=f"{self.source_name}:demo-{source_slug}-4",
                 title=f"{title} Stage web",
                 company="Atelier Hexagone",
                 city=city,
@@ -127,11 +137,11 @@ class DemoSourceConnector:
                 salary=None,
                 description_source="Stage JavaScript React pour etudiant Bac+2.",
                 source_url=f"https://example.test/offres/{source_slug}-stage-web",
+                source_identifier=f"demo-{source_slug}-4",
             ),
             OfferResult(
                 source_name=self.source_name,
                 source_radius_km=rayon_source_km,
-                result_identity=f"{self.source_name}:demo-{source_slug}-5",
                 title=f"{title} Alternance cloud",
                 company="Cooperative Loire",
                 city=city,
@@ -140,6 +150,7 @@ class DemoSourceConnector:
                 salary=None,
                 description_source="Alternance AWS Kubernetes niveau Bac.",
                 source_url=f"https://example.test/offres/{source_slug}-alternance-cloud",
+                source_identifier=f"demo-{source_slug}-5",
             ),
         ]
 
@@ -175,8 +186,26 @@ def run_search_trace(
         )
         return SearchTrace(session=session, result_count=0, failure_count=1)
 
+    previous_session = find_previous_session_for_same_recherche(
+        database_path,
+        session_id=session.id,
+        intitule=session.intitule,
+        localisation=session.localisation,
+        rayon_demande_km=session.rayon_demande_km,
+    )
+    previous_result_identities = (
+        list_result_identities_for_session(database_path, previous_session.id)
+        if previous_session is not None
+        else set()
+    )
+    active_result_identities = {result.result_identity for result in results}
     enriched_results = [
-        _stored_result_from_offer_result(result, session_id=session.id)
+        _stored_result_from_offer_result(
+            result,
+            session_id=session.id,
+            is_new=previous_session is not None
+            and result.result_identity not in previous_result_identities,
+        )
         for result in results
     ]
     save_offer_results(
@@ -184,11 +213,18 @@ def run_search_trace(
         session_id=session.id,
         results=enriched_results,
     )
+    save_inactive_offer_results_for_missing_identities(
+        database_path,
+        session_id=session.id,
+        recherche=session,
+        successful_source_names={source_connector.source_name},
+        active_result_identities=active_result_identities,
+    )
     return SearchTrace(session=session, result_count=len(results), failure_count=0)
 
 
 def _stored_result_from_offer_result(
-    result: OfferResult, *, session_id: int
+    result: OfferResult, *, session_id: int, is_new: bool
 ) -> StoredOfferResult:
     enrichment = enrich_result(result)
     return StoredOfferResult(
@@ -209,8 +245,20 @@ def _stored_result_from_offer_result(
         diploma_level=enrichment.diploma_level,
         source_url=result.source_url,
         remote_text=result.remote_text,
+        is_new=is_new,
         inactive=False,
     )
+
+
+def build_result_identity(
+    *, source_name: str, source_url: str, source_identifier: str | None = None
+) -> str:
+    identity_value = source_identifier or _canonicalize_source_url(source_url)
+    return f"{source_name}:{identity_value}"
+
+
+def _canonicalize_source_url(source_url: str) -> str:
+    return source_url.strip().split("#", maxsplit=1)[0].rstrip("/")
 
 
 def _slugify(value: str) -> str:

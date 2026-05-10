@@ -32,6 +32,32 @@
     </form>
   </section>
 
+  <section class="panel" aria-labelledby="recent-searches-title">
+    <h1 id="recent-searches-title">Recherches recentes</h1>
+    {% if recent_searches %}
+      <ul class="results">
+        {% for recent_search in recent_searches %}
+          <li class="result-card">
+            <form method="post" action="/" class="inline-search-form">
+              <input type="hidden" name="intitule" value="{{ recent_search.intitule }}">
+              <input type="hidden" name="localisation" value="{{ recent_search.localisation }}">
+              <input type="hidden" name="rayon_demande_km" value="{{ recent_search.rayon_demande_km }}">
+              <button type="submit">
+                {{ recent_search.intitule }} a {{ recent_search.localisation }}
+                - rayon demande {{ recent_search.rayon_demande_km }} km
+              </button>
+            </form>
+            <p class="meta">
+              Derniere Session de recherche #{{ recent_search.last_session_id }}
+            </p>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>Aucune Recherche recente.</p>
+    {% endif %}
+  </section>
+
   <section class="panel" aria-labelledby="results-title">
     <h1 id="results-title">Resultats d'offre</h1>
     {% if selected_session %}
@@ -122,6 +148,15 @@
               </div>
               {% if result.consulted_at %}
                 <p class="meta">Offre consultee</p>
+              {% endif %}
+              {% if result.favorite_at %}
+                <p class="meta">Offre favorite</p>
+              {% endif %}
+              {% if result.is_new %}
+                <p class="meta">Offre nouvelle</p>
+              {% endif %}
+              {% if result.inactive %}
+                <p class="meta">Offre inactive</p>
               {% endif %}
               <p class="meta">
                 {{ result.company }} - {{ result.city }} - {{ result.contract_type }}

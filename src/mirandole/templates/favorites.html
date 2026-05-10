@@ -47,6 +47,9 @@
             {% if result.consulted_at %}
               <p class="meta">Offre consultee</p>
             {% endif %}
+            {% if result.inactive %}
+              <p class="meta">Offre inactive</p>
+            {% endif %}
             <p class="meta">
               {{ result.company }} - {{ result.city }} - {{ result.contract_type }}
               {% if result.published_at %}- {{ result.published_at }}{% else %}- Date de publication non precisee{% endif %}

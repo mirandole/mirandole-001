@@ -1,16 +1,59 @@
 import sqlite3
 from pathlib import Path
 
-from mirandole.search import DemoSourceConnector, run_search_trace
+from mirandole.search import (
+    DemoSourceConnector,
+    DemoSourceUnavailable,
+    OfferResult,
+    build_result_identity,
+    run_search_trace,
+)
 from mirandole.storage import (
     initialize_storage,
     list_favorite_offer_results,
     list_offer_results_for_session,
+    list_recent_searches,
     list_search_sessions,
     list_source_failures_for_session,
     mark_offer_result_consulted,
     toggle_offer_result_favorite,
 )
+
+
+class MutableSourceConnector:
+    source_name = "Source mutable"
+
+    def __init__(self, source_identifiers: list[str]) -> None:
+        self.source_identifiers = source_identifiers
+
+    def search(
+        self, *, intitule: str, localisation: str, rayon_demande_km: int
+    ) -> list[OfferResult]:
+        return [
+            OfferResult(
+                source_name=self.source_name,
+                source_radius_km=rayon_demande_km,
+                title=f"{intitule} {source_identifier}",
+                company="Entreprise test",
+                city=localisation,
+                published_at=f"2026-05-0{index + 1}",
+                contract_type="CDI",
+                salary=None,
+                description_source="Developpement Python.",
+                source_url=f"https://example.test/{source_identifier}",
+                source_identifier=source_identifier,
+            )
+            for index, source_identifier in enumerate(self.source_identifiers)
+        ]
+
+
+class AlwaysUnavailableConnector:
+    source_name = "Source mutable"
+
+    def search(
+        self, *, intitule: str, localisation: str, rayon_demande_km: int
+    ) -> list[OfferResult]:
+        raise DemoSourceUnavailable("Source mutable indisponible.")
 
 
 def test_initialize_storage_is_idempotent(tmp_path: Path) -> None:
@@ -62,6 +105,8 @@ def test_search_trace_creates_session_and_persists_results(tmp_path: Path) -> No
         "https://example.test/offres/developpeur-backend-python"
     )
     assert results[0].remote_text == "Teletravail partiel"
+    assert results[0].is_new is False
+    assert results[0].inactive is False
 
 
 def test_demo_source_maps_rayon_demande_to_supported_rayon_source() -> None:
@@ -96,6 +141,169 @@ def test_results_are_sorted_by_freshness_with_unknown_dates_last(
         "2026-05-06",
         None,
     ]
+
+
+def test_recent_searches_are_limited_deduplicated_and_sorted_by_last_use(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+
+    for index in range(11):
+        run_search_trace(
+            database_path,
+            intitule=f"Developpeur {index}",
+            localisation="Nantes",
+            rayon_demande_km=20,
+        )
+    run_search_trace(
+        database_path,
+        intitule="  developpeur   1  ",
+        localisation="NANTES",
+        rayon_demande_km=20,
+    )
+
+    recent_searches = list_recent_searches(database_path)
+
+    assert len(recent_searches) == 10
+    assert recent_searches[0].intitule == "developpeur   1"
+    assert recent_searches[0].last_session_id == 12
+    assert [recent_search.intitule for recent_search in recent_searches].count(
+        "developpeur   1"
+    ) == 1
+    assert "Developpeur 0" not in [
+        recent_search.intitule for recent_search in recent_searches
+    ]
+
+
+def test_offre_nouvelle_compares_with_previous_session_for_same_recherche(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connector=MutableSourceConnector(["known-a", "known-b"]),
+    )
+
+    trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connector=MutableSourceConnector(["known-b", "new-c"]),
+    )
+
+    results = list_offer_results_for_session(database_path, trace.session.id)
+    active_results = [result for result in results if not result.inactive]
+
+    assert {result.result_identity: result.is_new for result in active_results} == {
+        "Source mutable:known-b": False,
+        "Source mutable:new-c": True,
+    }
+
+
+def test_identite_resultat_includes_source_and_url_or_source_identifier() -> None:
+    assert (
+        build_result_identity(
+            source_name="Source A",
+            source_url="https://example.test/offres/1/",
+        )
+        == "Source A:https://example.test/offres/1"
+    )
+    assert (
+        build_result_identity(
+            source_name="Source B",
+            source_url="https://example.test/offres/1/",
+        )
+        == "Source B:https://example.test/offres/1"
+    )
+    assert (
+        build_result_identity(
+            source_name="Source A",
+            source_url="https://example.test/offres/changed",
+            source_identifier="stable-1",
+        )
+        == "Source A:stable-1"
+    )
+
+
+def test_missing_known_offer_becomes_inactive_and_keeps_user_states(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    first_trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connector=MutableSourceConnector(["known-a", "known-b"]),
+    )
+    first_results = list_offer_results_for_session(
+        database_path, first_trace.session.id
+    )
+    known_a = next(
+        result for result in first_results if result.title.endswith("known-a")
+    )
+    mark_offer_result_consulted(database_path, known_a.id)
+    toggle_offer_result_favorite(database_path, known_a.id)
+
+    second_trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connector=MutableSourceConnector(["known-b"]),
+    )
+
+    second_results = list_offer_results_for_session(
+        database_path, second_trace.session.id
+    )
+    inactive_result = next(result for result in second_results if result.inactive)
+    favorites = list_favorite_offer_results(database_path)
+
+    assert inactive_result.result_identity == "Source mutable:known-a"
+    assert inactive_result.consulted_at is not None
+    assert inactive_result.favorite_at is not None
+    assert favorites[0].result_identity == "Source mutable:known-a"
+    assert favorites[0].inactive is True
+
+
+def test_echec_de_source_does_not_make_known_offers_inactive(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    successful_trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connector=MutableSourceConnector(["known-a"]),
+    )
+
+    failed_trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connector=AlwaysUnavailableConnector(),
+    )
+
+    failed_results = list_offer_results_for_session(
+        database_path, failed_trace.session.id
+    )
+    previous_results = list_offer_results_for_session(
+        database_path, successful_trace.session.id
+    )
+
+    assert failed_trace.failure_count == 1
+    assert failed_results == []
+    assert all(not result.inactive for result in previous_results)
 
 
 def test_source_failure_keeps_session_and_existing_results_active(
