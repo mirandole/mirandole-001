@@ -21,7 +21,11 @@ from mirandole.enrichment import (
     apply_result_filters,
     build_result_filters,
 )
-from mirandole.search import RAYONS_DEMANDE_KM, run_search_trace
+from mirandole.search import (
+    RAYONS_DEMANDE_KM,
+    build_source_connectors,
+    run_search_trace,
+)
 from mirandole.storage import (
     SearchSession,
     initialize_storage,
@@ -172,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             intitule=intitule,
             localisation=localisation,
             rayon_demande_km=rayon_demande_km,
+            connectors=build_source_connectors(current_settings),
         )
         return RedirectResponse(
             url=f"/?session_id={trace.session.id}",

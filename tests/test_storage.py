@@ -1,11 +1,17 @@
 import sqlite3
+from json import dumps
 from pathlib import Path
 
+from mirandole.config import Settings
 from mirandole.search import (
     DemoSourceConnector,
     DemoSourceUnavailable,
+    FranceTravailConnector,
+    FranceTravailHttpResponse,
     OfferResult,
+    SourceConnectorUnavailable,
     build_result_identity,
+    build_source_connectors,
     run_search_trace,
 )
 from mirandole.storage import (
@@ -54,6 +60,39 @@ class AlwaysUnavailableConnector:
         self, *, intitule: str, localisation: str, rayon_demande_km: int
     ) -> list[OfferResult]:
         raise DemoSourceUnavailable("Source mutable indisponible.")
+
+
+class FakeFranceTravailHttpClient:
+    def __init__(
+        self,
+        *,
+        token_status_code: int = 200,
+        search_status_code: int = 200,
+        search_payload: dict[str, object] | None = None,
+    ) -> None:
+        self.token_status_code = token_status_code
+        self.search_status_code = search_status_code
+        self.search_payload = search_payload or {"resultats": []}
+        self.token_data: dict[str, str] | None = None
+        self.search_params: dict[str, str] | None = None
+
+    def post_form(
+        self, url: str, data: dict[str, str], headers: dict[str, str]
+    ) -> FranceTravailHttpResponse:
+        self.token_data = data
+        return FranceTravailHttpResponse(
+            status_code=self.token_status_code,
+            body=dumps({"access_token": "token-test"}).encode(),
+        )
+
+    def get_json(
+        self, url: str, params: dict[str, str], headers: dict[str, str]
+    ) -> FranceTravailHttpResponse:
+        self.search_params = params
+        return FranceTravailHttpResponse(
+            status_code=self.search_status_code,
+            body=dumps(self.search_payload).encode(),
+        )
 
 
 def test_initialize_storage_is_idempotent(tmp_path: Path) -> None:
@@ -117,6 +156,178 @@ def test_demo_source_maps_rayon_demande_to_supported_rayon_source() -> None:
     assert connector.map_rayon_source(30) == 50
     assert connector.map_rayon_source(50) == 50
     assert connector.map_rayon_source(100) == 100
+
+
+def test_france_travail_connector_normalizes_resultats_offre() -> None:
+    http_client = FakeFranceTravailHttpClient(
+        search_payload={
+            "resultats": [
+                {
+                    "id": "176ABC",
+                    "intitule": "Developpeur Python",
+                    "entreprise": {"nom": "Atelier Hexagone"},
+                    "lieuTravail": {"libelle": "44 - Nantes"},
+                    "dateCreation": "2026-05-10T09:30:00.000Z",
+                    "typeContrat": "CDI",
+                    "salaire": {"libelle": "45 000 EUR annuel"},
+                    "description": "Developpement API Python. Bac+5 apprecie.",
+                    "origineOffre": {
+                        "urlOrigine": "https://candidat.francetravail.fr/offres/recherche/detail/176ABC"
+                    },
+                    "deplacementLibelle": "Teletravail partiel",
+                }
+            ]
+        }
+    )
+    connector = FranceTravailConnector(
+        client_id="client-id", client_secret="client-secret", http_client=http_client
+    )
+
+    results = connector.search(
+        intitule="Developpeur", localisation="Nantes", rayon_demande_km=30
+    )
+
+    assert http_client.token_data == {
+        "grant_type": "client_credentials",
+        "client_id": "client-id",
+        "client_secret": "client-secret",
+        "scope": "api_offresdemploiv2 o2dsoffre",
+    }
+    assert http_client.search_params == {
+        "motsCles": "Developpeur",
+        "lieu": "Nantes",
+        "distance": "30",
+    }
+    assert len(results) == 1
+    assert results[0].source_name == "France Travail"
+    assert results[0].source_radius_km == 30
+    assert results[0].title == "Developpeur Python"
+    assert results[0].company == "Atelier Hexagone"
+    assert results[0].city == "44 - Nantes"
+    assert results[0].published_at == "2026-05-10"
+    assert results[0].contract_type == "CDI"
+    assert results[0].salary == "45 000 EUR annuel"
+    assert results[0].description_source == "Developpement API Python. Bac+5 apprecie."
+    assert results[0].source_url == (
+        "https://candidat.francetravail.fr/offres/recherche/detail/176ABC"
+    )
+    assert results[0].source_identifier == "176ABC"
+    assert results[0].result_identity == "France Travail:176ABC"
+    assert results[0].remote_text == "Teletravail partiel"
+
+
+def test_france_travail_connector_handles_missing_optional_fields() -> None:
+    connector = FranceTravailConnector(
+        client_id="client-id",
+        client_secret="client-secret",
+        http_client=FakeFranceTravailHttpClient(
+            search_payload={
+                "resultats": [
+                    {
+                        "id": "176DEF",
+                        "intitule": "Support applicatif",
+                    }
+                ]
+            }
+        ),
+    )
+
+    results = connector.search(
+        intitule="Support", localisation="Rennes", rayon_demande_km=10
+    )
+
+    assert len(results) == 1
+    assert results[0].company == "Entreprise non precisee"
+    assert results[0].city == "Rennes"
+    assert results[0].published_at is None
+    assert results[0].contract_type == "Non precise"
+    assert results[0].salary is None
+    assert results[0].description_source is None
+    assert results[0].source_url == (
+        "https://candidat.francetravail.fr/offres/recherche/detail/176DEF"
+    )
+
+
+def test_france_travail_source_failure_does_not_fail_session(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    france_travail = FranceTravailConnector(
+        client_id="client-id",
+        client_secret="client-secret",
+        http_client=FakeFranceTravailHttpClient(search_status_code=429),
+    )
+
+    trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=20,
+        connectors=[DemoSourceConnector(), france_travail],
+    )
+
+    results = list_offer_results_for_session(database_path, trace.session.id)
+    failures = list_source_failures_for_session(database_path, trace.session.id)
+
+    assert trace.result_count == 5
+    assert trace.failure_count == 1
+    assert results
+    assert failures[0].source_name == "France Travail"
+    assert "HTTP 429" in failures[0].message
+
+
+def test_france_travail_auth_failure_is_echec_de_source() -> None:
+    connector = FranceTravailConnector(
+        client_id="client-id",
+        client_secret="client-secret",
+        http_client=FakeFranceTravailHttpClient(token_status_code=401),
+    )
+
+    try:
+        connector.search(
+            intitule="Developpeur", localisation="Nantes", rayon_demande_km=20
+        )
+    except SourceConnectorUnavailable as exc:
+        assert "auth" in str(exc)
+        assert "HTTP 401" in str(exc)
+    else:
+        raise AssertionError("Expected SourceConnectorUnavailable")
+
+
+def test_france_travail_connector_is_disabled_by_configuration(tmp_path: Path) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        france_travail_enabled=False,
+        france_travail_client_id=None,
+        france_travail_client_secret=None,
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert [connector.source_name for connector in connectors] == ["Source demo"]
+
+
+def test_france_travail_connector_is_enabled_by_configuration(tmp_path: Path) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        france_travail_enabled=True,
+        france_travail_client_id="client-id",
+        france_travail_client_secret="client-secret",
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert [connector.source_name for connector in connectors] == [
+        "Source demo",
+        "France Travail",
+    ]
 
 
 def test_results_are_sorted_by_freshness_with_unknown_dates_last(
