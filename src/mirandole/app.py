@@ -5,13 +5,20 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, Request, status
+from fastapi import Depends, FastAPI, Form, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from mirandole.config import Settings
-from mirandole.storage import initialize_storage
+from mirandole.search import RAYONS_DEMANDE_KM, run_search_trace
+from mirandole.storage import (
+    SearchSession,
+    initialize_storage,
+    list_offer_results_for_session,
+    list_search_sessions,
+    list_source_failures_for_session,
+)
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
@@ -64,13 +71,74 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def home(
-        request: Request, _authenticated: None = Depends(require_user)
+        request: Request,
+        session_id: int | None = Query(default=None),
+        _authenticated: None = Depends(require_user),
+        current_settings: Settings = SETTINGS_DEPENDENCY,
     ) -> HTMLResponse:
+        sessions = list_search_sessions(current_settings.database_path)
+        selected_session = _select_session(sessions, session_id)
+        results = []
+        failures = []
+        if selected_session is not None:
+            results = list_offer_results_for_session(
+                current_settings.database_path, selected_session.id
+            )
+            failures = list_source_failures_for_session(
+                current_settings.database_path, selected_session.id
+            )
+
         return templates.TemplateResponse(
             request,
             "home.html",
-            {"title": "Recherche d'offres d'emploi"},
+            {
+                "title": "Recherche d'offres d'emploi",
+                "rayons_demande_km": RAYONS_DEMANDE_KM,
+                "selected_session": selected_session,
+                "sessions": sessions,
+                "results": results,
+                "failures": failures,
+                "form_error": None,
+            },
             headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/", response_class=HTMLResponse, response_model=None)
+    async def start_search(
+        request: Request,
+        intitule: str = Form(...),
+        localisation: str = Form(...),
+        rayon_demande_km: int = Form(...),
+        _authenticated: None = Depends(require_user),
+        current_settings: Settings = SETTINGS_DEPENDENCY,
+    ) -> HTMLResponse | RedirectResponse:
+        if rayon_demande_km not in RAYONS_DEMANDE_KM:
+            sessions = list_search_sessions(current_settings.database_path)
+            return templates.TemplateResponse(
+                request,
+                "home.html",
+                {
+                    "title": "Recherche d'offres d'emploi",
+                    "rayons_demande_km": RAYONS_DEMANDE_KM,
+                    "selected_session": sessions[0] if sessions else None,
+                    "sessions": sessions,
+                    "results": [],
+                    "failures": [],
+                    "form_error": "Rayon demande non pris en charge.",
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+                headers={"Cache-Control": "no-store"},
+            )
+
+        trace = run_search_trace(
+            current_settings.database_path,
+            intitule=intitule,
+            localisation=localisation,
+            rayon_demande_km=rayon_demande_km,
+        )
+        return RedirectResponse(
+            url=f"/?session_id={trace.session.id}",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     @app.get("/login", response_class=HTMLResponse)
@@ -111,3 +179,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     return app
+
+
+def _select_session(
+    sessions: list[SearchSession], requested_session_id: int | None
+) -> SearchSession | None:
+    if requested_session_id is None:
+        return sessions[0] if sessions else None
+
+    for session in sessions:
+        if session.id == requested_session_id:
+            return session
+
+    return sessions[0] if sessions else None
