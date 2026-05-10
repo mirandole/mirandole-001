@@ -19,6 +19,13 @@ export MIRANDOLE_PASSWORD="change-this-local-password"
 export MIRANDOLE_SESSION_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export MIRANDOLE_DATABASE_PATH="./var/mirandole.sqlite3"
 export MIRANDOLE_COOKIE_SECURE="false"
+
+read -r -p "France Travail client id: " MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID
+read -r -s -p "France Travail client secret: " MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET
+export MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID
+export MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET
+export MIRANDOLE_FRANCE_TRAVAIL_ENABLED="true"
+
 uv run uvicorn --factory mirandole.app:create_app --reload
 ```
 
