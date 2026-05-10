@@ -16,6 +16,16 @@ Add the Adzuna Connecteur de source end to end. The connector should use the sou
 - [ ] The connector can be enabled or disabled by configuration.
 - [ ] Tests cover successful normalization, missing optional fields, source failure, and disabled-source behavior.
 
+## Implementation notes
+
+- Use `scripts/check-adzuna-api.sh` as a working reference for the Adzuna search
+  call shape, required environment variables, JSON response fields, and
+  `distance` parameter handling.
+- The script has been validated with `MIRANDOLE_ADZUNA_APP_ID` and
+  `MIRANDOLE_ADZUNA_APP_KEY`; `distance=10` and `distance=50` change the result
+  count for `what=Python&where=Paris`, so the connector can map
+  `rayon_demande_km` to Adzuna's `distance` parameter.
+
 ## Blocked by
 
 - #3
