@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from json import JSONDecodeError, loads
 from pathlib import Path
@@ -228,7 +229,9 @@ class FranceTravailConnector:
     search_url = (
         "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
     )
-    geocoding_url = "https://geo.api.gouv.fr/communes"
+    communes_reference_url = (
+        "https://api.francetravail.io/partenaire/offresdemploi/v2/referentiel/communes"
+    )
     scope = "api_offresdemploiv2 o2dsoffre"
 
     def __init__(
@@ -250,7 +253,9 @@ class FranceTravailConnector:
     ) -> list[OfferResult]:
         rayon_source_km = self.map_rayon_source(rayon_demande_km)
         access_token = self._fetch_access_token()
-        location_criteria = self._resolve_location_criteria(localisation)
+        location_criteria = self._resolve_location_criteria(
+            localisation, access_token=access_token
+        )
         response = self.http_client.get_json(
             self.search_url,
             params={
@@ -286,27 +291,20 @@ class FranceTravailConnector:
         ]
 
     def _resolve_location_criteria(
-        self, localisation: str
+        self, localisation: str, *, access_token: str
     ) -> FranceTravailLocationCriteria:
-        explicit_postal_code = _extract_postal_code(localisation)
-        if explicit_postal_code is not None:
-            return FranceTravailLocationCriteria(
-                parameter_name="codePostal", value=explicit_postal_code
-            )
-
         response = self.http_client.get_json(
-            self.geocoding_url,
-            params={
-                "nom": localisation.strip(),
-                "fields": "code,codesPostaux,nom",
-                "boost": "population",
-                "limit": "1",
+            self.communes_reference_url,
+            params={},
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
             },
-            headers={"Accept": "application/json"},
         )
         if response.status_code >= 400:
             raise SourceConnectorUnavailable(
-                f"France Travail n'a pas pu resoudre la localisation "
+                f"France Travail n'a pas pu charger le referentiel des communes "
+                f"pour resoudre la localisation "
                 f"{localisation.strip()}."
             )
 
@@ -317,20 +315,13 @@ class FranceTravailConnector:
                 f"{localisation.strip()}."
             )
 
-        first_result = payload[0]
-        if not isinstance(first_result, dict):
-            raise SourceConnectorUnavailable(
-                "France Travail a retourne un referentiel de localisation inattendu."
-            )
-        postal_code = _first_string_value(first_result.get("codesPostaux"))
-        if postal_code is not None:
-            return FranceTravailLocationCriteria(
-                parameter_name="codePostal", value=postal_code
-            )
-        commune_code = _string_value(first_result.get("code"))
+        commune_code = _find_commune_code(
+            payload, searched_localisation=localisation
+        )
         if commune_code is None:
             raise SourceConnectorUnavailable(
-                "France Travail a retourne une commune sans code postal ni code."
+                f"France Travail n'a pas reconnu la localisation "
+                f"{localisation.strip()}."
             )
         return FranceTravailLocationCriteria(
             parameter_name="commune", value=commune_code
@@ -575,6 +566,55 @@ def _first_string_value(value: object) -> str | None:
         if string_item is not None:
             return string_item
     return None
+
+
+def _find_commune_code(
+    communes: list[object], *, searched_localisation: str
+) -> str | None:
+    searched_postal_code = _extract_postal_code(searched_localisation)
+    if searched_postal_code is not None:
+        for commune in communes:
+            if not isinstance(commune, dict):
+                continue
+            if _string_value(commune.get("codePostal")) != searched_postal_code:
+                continue
+            commune_code = _string_value(commune.get("code"))
+            if commune_code is not None:
+                return commune_code
+
+    searched_name = _normalize_search_text(
+        re.sub(r"\b\d{5}\b", "", searched_localisation)
+    )
+    exact_name_match: str | None = None
+    prefix_name_match: str | None = None
+    for commune in communes:
+        if not isinstance(commune, dict):
+            continue
+        commune_code = _string_value(commune.get("code"))
+        commune_name = _string_value(commune.get("libelle"))
+        if commune_code is None or commune_name is None:
+            continue
+
+        normalized_commune_name = _normalize_search_text(commune_name)
+        if normalized_commune_name == searched_name:
+            exact_name_match = commune_code
+            break
+        if (
+            prefix_name_match is None
+            and searched_name
+            and normalized_commune_name.startswith(f"{searched_name} ")
+        ):
+            prefix_name_match = commune_code
+
+    return exact_name_match or prefix_name_match
+
+
+def _normalize_search_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_value = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
+    return " ".join(ascii_value.casefold().split())
 
 
 def _extract_postal_code(value: str) -> str | None:

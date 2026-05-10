@@ -76,7 +76,8 @@ class FakeFranceTravailHttpClient:
         self.location_status_code = location_status_code
         self.search_status_code = search_status_code
         self.location_payload = location_payload or [
-            {"code": "44109", "codesPostaux": ["44000"], "nom": "Nantes"}
+            {"code": "44109", "codePostal": "44000", "libelle": "NANTES"},
+            {"code": "35238", "codePostal": "35000", "libelle": "RENNES"},
         ]
         self.search_payload = search_payload or {"resultats": []}
         self.token_data: dict[str, str] | None = None
@@ -95,7 +96,7 @@ class FakeFranceTravailHttpClient:
     def get_json(
         self, url: str, params: dict[str, str], headers: dict[str, str]
     ) -> FranceTravailHttpResponse:
-        if "geo.api.gouv.fr" in url:
+        if "referentiel/communes" in url:
             self.location_params = params
             return FranceTravailHttpResponse(
                 status_code=self.location_status_code,
@@ -207,14 +208,10 @@ def test_france_travail_connector_normalizes_resultats_offre() -> None:
         "scope": "api_offresdemploiv2 o2dsoffre",
     }
     assert http_client.location_params == {
-        "nom": "Nantes",
-        "fields": "code,codesPostaux,nom",
-        "boost": "population",
-        "limit": "1",
     }
     assert http_client.search_params == {
         "motsCles": "Developpeur",
-        "codePostal": "44000",
+        "commune": "44109",
         "distance": "30",
     }
     assert len(results) == 1
@@ -235,10 +232,10 @@ def test_france_travail_connector_normalizes_resultats_offre() -> None:
     assert results[0].remote_text == "Teletravail partiel"
 
 
-def test_france_travail_connector_resolves_lyon_to_postal_code() -> None:
+def test_france_travail_connector_resolves_lyon_to_commune_code() -> None:
     http_client = FakeFranceTravailHttpClient(
         location_payload=[
-            {"code": "69123", "codesPostaux": ["69001", "69002"], "nom": "Lyon"}
+            {"code": "69123", "codePostal": "69000", "libelle": "LYON"}
         ]
     )
     connector = FranceTravailConnector(
@@ -247,31 +244,30 @@ def test_france_travail_connector_resolves_lyon_to_postal_code() -> None:
 
     connector.search(intitule="Linux", localisation="Lyon", rayon_demande_km=50)
 
-    assert http_client.location_params == {
-        "nom": "Lyon",
-        "fields": "code,codesPostaux,nom",
-        "boost": "population",
-        "limit": "1",
-    }
+    assert http_client.location_params == {}
     assert http_client.search_params == {
         "motsCles": "Linux",
-        "codePostal": "69001",
+        "commune": "69123",
         "distance": "50",
     }
 
 
-def test_france_travail_connector_searches_postal_code_with_code_postal() -> None:
-    http_client = FakeFranceTravailHttpClient()
+def test_france_travail_connector_resolves_postal_code_to_commune_code() -> None:
+    http_client = FakeFranceTravailHttpClient(
+        location_payload=[
+            {"code": "75101", "codePostal": "75001", "libelle": "PARIS 01"}
+        ]
+    )
     connector = FranceTravailConnector(
         client_id="client-id", client_secret="client-secret", http_client=http_client
     )
 
     connector.search(intitule="Linux", localisation="75001", rayon_demande_km=10)
 
-    assert http_client.location_params is None
+    assert http_client.location_params == {}
     assert http_client.search_params == {
         "motsCles": "Linux",
-        "codePostal": "75001",
+        "commune": "75101",
         "distance": "10",
     }
 
