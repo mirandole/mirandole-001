@@ -6,6 +6,11 @@ Parent PRD: #1
 
 Add the Jooble Connecteur de source end to end. The connector should use the source access documented in the source checklist, respect Jooble-supported rayons, normalize offers into Resultats d'offre, and integrate with partial source failure handling.
 
+## API notes
+
+- The default Jooble API access is limited to 500 requests.
+- To increase the request quota or ask other API questions, contact Jooble by replying to their API credential email.
+
 ## Acceptance criteria
 
 - [ ] Jooble credentials are read from environment configuration and never committed.
