@@ -46,6 +46,14 @@ gh pr merge "$PR" \
 
 echo "Updating main..."
 git checkout main
+if [ -n "${ISSUE:-}" ] && [ -f ".agent-progress/issue-$ISSUE.md" ] && ! git ls-files --error-unmatch ".agent-progress/issue-$ISSUE.md" >/dev/null 2>&1; then
+  BACKUP="/tmp/mirandole-agent-progress-before-pull-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$BACKUP"
+  cp -a ".agent-progress/issue-$ISSUE.md" "$BACKUP/" 2>/dev/null || true
+  rm -f ".agent-progress/issue-$ISSUE.md"
+  echo "Removed untracked .agent-progress/issue-$ISSUE.md before pull; backup: $BACKUP"
+fi
+
 git pull --ff-only
 
 if [ -n "$ISSUE" ]; then
