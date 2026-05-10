@@ -28,6 +28,7 @@ from mirandole.search import (
 )
 from mirandole.storage import (
     SearchSession,
+    StoredOfferResult,
     initialize_storage,
     list_favorite_offer_results,
     list_offer_results_for_session,
@@ -39,6 +40,8 @@ from mirandole.storage import (
 )
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+DEMO_SOURCE_NAME = "Source demo"
+MOCK_SOURCE_URL_PREFIX = "https://example.test/offres/"
 
 
 def get_settings(request: Request) -> Settings:
@@ -111,6 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             results = list_offer_results_for_session(
                 current_settings.database_path, selected_session.id
             )
+            results = _filter_prod_mock_results(results, current_settings)
             results = apply_result_filters(results, result_filters)
             failures = list_source_failures_for_session(
                 current_settings.database_path, selected_session.id
@@ -194,6 +198,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if source_url is None:
             return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+        if current_settings.prod and _is_mock_source_url(source_url):
+            return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
         return RedirectResponse(url=source_url, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -223,6 +229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         results = list_favorite_offer_results(
             current_settings.database_path, sort=selected_sort
         )
+        results = _filter_prod_mock_results(results, current_settings)
         return templates.TemplateResponse(
             request,
             "favorites.html",
@@ -291,3 +298,21 @@ def _safe_return_path(value: str) -> str:
     if not value.startswith("/") or value.startswith("//"):
         return "/"
     return value
+
+
+def _filter_prod_mock_results(
+    results: list[StoredOfferResult], settings: Settings
+) -> list[StoredOfferResult]:
+    if not settings.prod:
+        return results
+    return [result for result in results if not _is_mock_offer_result(result)]
+
+
+def _is_mock_offer_result(result: StoredOfferResult) -> bool:
+    return result.source_name == DEMO_SOURCE_NAME or _is_mock_source_url(
+        result.source_url
+    )
+
+
+def _is_mock_source_url(source_url: str) -> bool:
+    return source_url.startswith(MOCK_SOURCE_URL_PREFIX)

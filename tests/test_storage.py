@@ -662,6 +662,23 @@ def test_france_travail_connector_is_enabled_by_configuration(tmp_path: Path) ->
     ]
 
 
+def test_demo_connector_is_disabled_in_prod_configuration(tmp_path: Path) -> None:
+    settings = Settings(
+        password="correct horse battery staple",
+        session_secret="x" * 32,
+        database_path=tmp_path / "app.sqlite3",
+        cookie_secure=False,
+        prod=True,
+        france_travail_enabled=True,
+        france_travail_client_id="client-id",
+        france_travail_client_secret="client-secret",
+    )
+
+    connectors = build_source_connectors(settings)
+
+    assert [connector.source_name for connector in connectors] == ["France Travail"]
+
+
 def test_adzuna_connector_is_disabled_by_configuration(tmp_path: Path) -> None:
     settings = Settings(
         password="correct horse battery staple",

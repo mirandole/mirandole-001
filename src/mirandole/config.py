@@ -34,6 +34,7 @@ class Settings:
     password: str
     session_secret: str
     database_path: Path
+    prod: bool = False
     cookie_secure: bool = True
     france_travail_enabled: bool = False
     france_travail_client_id: str | None = None
@@ -48,6 +49,7 @@ class Settings:
         password = _read_required_env("MIRANDOLE_PASSWORD")
         session_secret = _read_required_env("MIRANDOLE_SESSION_SECRET")
         database_path = Path(_read_required_env("MIRANDOLE_DATABASE_PATH"))
+        prod = os.getenv("PROD", "false").lower()
         cookie_secure = os.getenv("MIRANDOLE_COOKIE_SECURE", "true").lower()
         france_travail_enabled = os.getenv(
             "MIRANDOLE_FRANCE_TRAVAIL_ENABLED", "false"
@@ -67,6 +69,8 @@ class Settings:
             raise ConfigError("MIRANDOLE_PASSWORD must be at least 12 characters")
         if len(session_secret) < 32:
             raise ConfigError("MIRANDOLE_SESSION_SECRET must be at least 32 characters")
+        if prod not in {"true", "false"}:
+            raise ConfigError("PROD must be true or false")
         if cookie_secure not in {"true", "false"}:
             raise ConfigError("MIRANDOLE_COOKIE_SECURE must be true or false")
         if france_travail_enabled not in {"true", "false"}:
@@ -106,6 +110,7 @@ class Settings:
             password=password,
             session_secret=session_secret,
             database_path=database_path,
+            prod=prod == "true",
             cookie_secure=cookie_secure == "true",
             france_travail_enabled=france_travail_enabled == "true",
             france_travail_client_id=france_travail_client_id,

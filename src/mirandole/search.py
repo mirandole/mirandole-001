@@ -551,7 +551,9 @@ class AdzunaConnector:
 
 
 def build_source_connectors(settings: Settings) -> list[SourceConnector]:
-    connectors: list[SourceConnector] = [DemoSourceConnector()]
+    connectors: list[SourceConnector] = []
+    if not settings.prod:
+        connectors.append(DemoSourceConnector())
     if settings.france_travail_enabled:
         assert settings.france_travail_client_id is not None
         assert settings.france_travail_client_secret is not None

@@ -7,11 +7,14 @@ from mirandole.app import create_app
 from mirandole.config import ConfigError, Settings
 
 
-def make_settings(database_path: Path, *, cookie_secure: bool = False) -> Settings:
+def make_settings(
+    database_path: Path, *, cookie_secure: bool = False, prod: bool = False
+) -> Settings:
     return Settings(
         password="correct horse battery staple",
         session_secret="x" * 32,
         database_path=database_path,
+        prod=prod,
         cookie_secure=cookie_secure,
     )
 
@@ -142,6 +145,84 @@ def test_utilisateur_principal_can_submit_recherche_offres(
     assert "Rayon source 50 km" in response.text
     assert "Developpeur backend Stage web" not in response.text
     assert "Developpeur backend Alternance cloud" not in response.text
+
+
+def test_prod_hides_existing_mock_offers_from_search_session(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    app = create_app(make_settings(database_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Administrateur linux",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+
+    prod_app = create_app(make_settings(database_path, prod=True))
+    with TestClient(prod_app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        response = client.get("/", params={"session_id": "1"})
+
+    assert response.status_code == 200
+    assert "https://example.test/offres/administrateur-linux-data" not in response.text
+    assert "Administrateur linux Data" not in response.text
+    assert "Aucun Resultat d'offre" in response.text
+
+
+def test_prod_hides_existing_mock_offers_from_favorites(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    app = create_app(make_settings(database_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Administrateur linux",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        client.post(
+            "/offer-results/2/favorite",
+            data={"return_to": "/?session_id=1"},
+            follow_redirects=False,
+        )
+
+    prod_app = create_app(make_settings(database_path, prod=True))
+    with TestClient(prod_app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        response = client.get("/favorites")
+
+    assert response.status_code == 200
+    assert "https://example.test/offres/administrateur-linux-data" not in response.text
+    assert "Administrateur linux Data" not in response.text
 
 
 def test_home_displays_recent_searches_without_duplicates(tmp_path: Path) -> None:
@@ -384,6 +465,31 @@ def test_france_travail_credentials_are_read_from_environment(
     assert settings.france_travail_enabled is True
     assert settings.france_travail_client_id == "client-id"
     assert settings.france_travail_client_secret == "client-secret"
+
+
+def test_prod_configuration_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("PROD", "true")
+
+    settings = Settings.from_env()
+
+    assert settings.prod is True
+
+
+def test_prod_configuration_must_be_boolean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("PROD", "yes")
+
+    with pytest.raises(ConfigError, match="PROD must be true or false"):
+        Settings.from_env()
 
 
 def test_enabled_france_travail_requires_credentials(

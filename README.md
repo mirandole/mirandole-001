@@ -19,6 +19,7 @@ export MIRANDOLE_PASSWORD="change-this-local-password"
 export MIRANDOLE_SESSION_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export MIRANDOLE_DATABASE_PATH="./var/mirandole.sqlite3"
 export MIRANDOLE_COOKIE_SECURE="false"
+export PROD="false"
 
 read -r -p "France Travail client id: " MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID
 read -r -s -p "France Travail client secret: " MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET
@@ -50,6 +51,9 @@ Required environment variables:
 - `MIRANDOLE_COOKIE_SECURE`: optional, defaults to `true`. Keep `true` when the
   Application deployee is served over HTTPS. Set `false` only for local HTTP
   development or an explicitly controlled WireGuard-only HTTP deployment.
+- `PROD`: optional, defaults to `false`. Set `true` in production to disable the
+  demo Source d'offres and prevent mock `https://example.test/offres/...`
+  results from being returned.
 - `MIRANDOLE_FRANCE_TRAVAIL_ENABLED`: optional, defaults to `false`. Set `true`
   to enable the France Travail Connecteur de source.
 - `MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID`: required only when France Travail is
