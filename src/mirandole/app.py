@@ -25,9 +25,12 @@ from mirandole.search import RAYONS_DEMANDE_KM, run_search_trace
 from mirandole.storage import (
     SearchSession,
     initialize_storage,
+    list_favorite_offer_results,
     list_offer_results_for_session,
     list_search_sessions,
     list_source_failures_for_session,
+    mark_offer_result_consulted,
+    toggle_offer_result_favorite,
 )
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -170,6 +173,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
+    @app.get("/offer-results/{offer_result_id}/open")
+    async def open_offer_result(
+        offer_result_id: int,
+        _authenticated: None = Depends(require_user),
+        current_settings: Settings = SETTINGS_DEPENDENCY,
+    ) -> RedirectResponse:
+        source_url = mark_offer_result_consulted(
+            current_settings.database_path, offer_result_id
+        )
+        if source_url is None:
+            return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+        return RedirectResponse(url=source_url, status_code=status.HTTP_303_SEE_OTHER)
+
+    @app.post("/offer-results/{offer_result_id}/favorite")
+    async def toggle_offer_favorite(
+        offer_result_id: int,
+        return_to: str = Form(default="/"),
+        _authenticated: None = Depends(require_user),
+        current_settings: Settings = SETTINGS_DEPENDENCY,
+    ) -> RedirectResponse:
+        toggle_offer_result_favorite(current_settings.database_path, offer_result_id)
+        return RedirectResponse(
+            url=_safe_return_path(return_to),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.get("/favorites", response_class=HTMLResponse)
+    async def favorites(
+        request: Request,
+        sort: str = Query(default="favorite_at"),
+        _authenticated: None = Depends(require_user),
+        current_settings: Settings = SETTINGS_DEPENDENCY,
+    ) -> HTMLResponse:
+        selected_sort = (
+            sort if sort in {"favorite_at", "published_at"} else "favorite_at"
+        )
+        results = list_favorite_offer_results(
+            current_settings.database_path, sort=selected_sort
+        )
+        return templates.TemplateResponse(
+            request,
+            "favorites.html",
+            {
+                "title": "Vue favoris",
+                "results": results,
+                "sort": selected_sort,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.get("/login", response_class=HTMLResponse)
     async def login_form(request: Request) -> HTMLResponse:
         if request.session.get("authenticated"):
@@ -221,3 +275,9 @@ def _select_session(
             return session
 
     return sessions[0] if sessions else None
+
+
+def _safe_return_path(value: str) -> str:
+    if not value.startswith("/") or value.startswith("//"):
+        return "/"
+    return value
