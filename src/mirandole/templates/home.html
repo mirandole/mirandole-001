@@ -47,6 +47,55 @@
         </p>
       {% endfor %}
 
+      <form method="get" action="/" class="filter-form">
+        <input type="hidden" name="session_id" value="{{ selected_session.id }}">
+        <fieldset>
+          <legend>Type de contrat recherche</legend>
+          {% for option in contract_filter_options %}
+            <label class="choice">
+              <input
+                type="checkbox"
+                name="contract_type"
+                value="{{ option }}"
+                {% if option in filters.contract_types %}checked{% endif %}
+              >
+              {{ option }}
+            </label>
+          {% endfor %}
+        </fieldset>
+        <fieldset>
+          <legend>Niveau d'experience demande</legend>
+          {% for option in experience_filter_options %}
+            <label class="choice">
+              <input
+                type="checkbox"
+                name="experience_level"
+                value="{{ option }}"
+                {% if option in filters.experience_levels %}checked{% endif %}
+              >
+              {{ option }}
+            </label>
+          {% endfor %}
+        </fieldset>
+        <fieldset>
+          <legend>Niveau de diplome demande</legend>
+          {% for option in diploma_filter_options %}
+            <label class="choice">
+              <input
+                type="checkbox"
+                name="diploma_level"
+                value="{{ option }}"
+                {% if option in filters.diploma_levels %}checked{% endif %}
+              >
+              {{ option }}
+            </label>
+          {% endfor %}
+        </fieldset>
+        <div class="actions compact">
+          <button type="submit">Appliquer les filtres</button>
+        </div>
+      </form>
+
       {% if results %}
         <ul class="results">
           {% for result in results %}
@@ -60,6 +109,13 @@
                 {{ result.source_name }} - Identite de resultat {{ result.result_identity }}
                 - Rayon source {{ result.source_radius_km }} km
               </p>
+              <p class="meta">
+                Niveau d'experience demande: {{ result.experience_level }} -
+                Niveau de diplome demande: {{ result.diploma_level }}
+              </p>
+              {% if result.skill_tags %}
+                <p class="meta">Tags de competence: {{ result.skill_tags | join(", ") }}</p>
+              {% endif %}
               {% if result.salary %}
                 <p class="meta">Remuneration indiquee: {{ result.salary }}</p>
               {% endif %}

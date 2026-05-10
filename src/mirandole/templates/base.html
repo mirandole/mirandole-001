@@ -59,6 +59,11 @@
         font: inherit;
       }
 
+      input[type="checkbox"] {
+        width: auto;
+        min-height: 0;
+      }
+
       button {
         min-height: 40px;
         border: 0;
@@ -76,6 +81,10 @@
         gap: 12px;
         align-items: center;
         margin-top: 18px;
+      }
+
+      .compact {
+        margin-top: 8px;
       }
 
       .error {
@@ -100,6 +109,32 @@
         margin: 18px 0 0;
         padding: 0;
         list-style: none;
+      }
+
+      .filter-form {
+        display: grid;
+        gap: 12px;
+        margin: 18px 0;
+      }
+
+      fieldset {
+        margin: 0;
+        border: 1px solid #d9dee7;
+        border-radius: 6px;
+        padding: 12px;
+      }
+
+      legend {
+        padding: 0 4px;
+        font-weight: 700;
+      }
+
+      .choice {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+        margin: 6px 12px 6px 0;
+        font-weight: 500;
       }
 
       .result-card {
