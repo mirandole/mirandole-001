@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from mirandole.storage import (
 )
 
 RAYONS_DEMANDE_KM = [10, 20, 30, 50, 100]
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -424,18 +426,21 @@ class FranceTravailConnector:
 
 class AdzunaConnector:
     source_name = "Adzuna"
-    search_url = "https://api.adzuna.com/v1/api/jobs/fr/search/1"
-    results_per_page = 20
+    search_url_template = "https://api.adzuna.com/v1/api/jobs/fr/search/{page}"
+    results_per_page = 50
+    pages_per_search = 4
 
     def __init__(
         self,
         *,
         app_id: str,
         app_key: str,
+        pages_per_search: int = 4,
         http_client: AdzunaHttpClient | None = None,
     ) -> None:
         self.app_id = app_id
         self.app_key = app_key
+        self.pages_per_search = pages_per_search
         self.http_client = http_client or AdzunaHttpClient()
 
     def map_rayon_source(self, rayon_demande_km: int) -> int:
@@ -445,28 +450,60 @@ class AdzunaConnector:
         self, *, intitule: str, localisation: str, rayon_demande_km: int
     ) -> list[OfferResult]:
         rayon_source_km = self.map_rayon_source(rayon_demande_km)
-        response = self.http_client.get_json(
-            self.search_url,
-            params={
-                "app_id": self.app_id,
-                "app_key": self.app_key,
-                "what": intitule,
-                "where": localisation,
-                "distance": str(rayon_source_km),
-                "results_per_page": str(self.results_per_page),
-                "content-type": "application/json",
-            },
-            headers={"Accept": "application/json"},
-        )
-        if response.status_code >= 400:
-            raise SourceConnectorUnavailable(
-                f"Adzuna a retourne HTTP {response.status_code}."
-            )
+        raw_results: list[dict[str, object]] = []
+        total_count: int | None = None
+        pages_fetched = 0
 
-        payload = _decode_json_payload(response.body, source_name=self.source_name)
-        raw_results = payload.get("results", [])
-        if not isinstance(raw_results, list):
-            raise SourceConnectorUnavailable("Adzuna a retourne un format inattendu.")
+        for page in range(1, self.pages_per_search + 1):
+            response = self.http_client.get_json(
+                self.search_url_template.format(page=page),
+                params={
+                    "app_id": self.app_id,
+                    "app_key": self.app_key,
+                    "what": intitule,
+                    "where": localisation,
+                    "distance": str(rayon_source_km),
+                    "results_per_page": str(self.results_per_page),
+                    "sort_by": "date",
+                    "sort_direction": "down",
+                    "content-type": "application/json",
+                },
+                headers={"Accept": "application/json"},
+            )
+            if response.status_code >= 400:
+                raise SourceConnectorUnavailable(
+                    f"Adzuna a retourne HTTP {response.status_code}."
+                )
+
+            payload = _decode_json_payload(response.body, source_name=self.source_name)
+            page_raw_results = payload.get("results", [])
+            if not isinstance(page_raw_results, list):
+                raise SourceConnectorUnavailable(
+                    "Adzuna a retourne un format inattendu."
+                )
+            page_total_count = payload.get("count")
+            if total_count is None and isinstance(page_total_count, int):
+                total_count = page_total_count
+            raw_results.extend(
+                raw_offer
+                for raw_offer in page_raw_results
+                if isinstance(raw_offer, dict)
+            )
+            pages_fetched += 1
+
+            if len(page_raw_results) < self.results_per_page:
+                break
+
+        LOGGER.info(
+            "Adzuna a recupere %d offre(s) sur %s disponible(s) en %d page(s) "
+            "pour intitule=%r localisation=%r rayon=%d km.",
+            len(raw_results),
+            total_count if total_count is not None else "un nombre inconnu",
+            pages_fetched,
+            intitule,
+            localisation,
+            rayon_source_km,
+        )
 
         return [
             self._normalize_offer(
@@ -475,7 +512,6 @@ class AdzunaConnector:
                 rayon_source_km=rayon_source_km,
             )
             for raw_offer in raw_results
-            if isinstance(raw_offer, dict)
         ]
 
     def _normalize_offer(
@@ -532,6 +568,7 @@ def build_source_connectors(settings: Settings) -> list[SourceConnector]:
             AdzunaConnector(
                 app_id=settings.adzuna_app_id,
                 app_key=settings.adzuna_app_key,
+                pages_per_search=settings.adzuna_pages_per_search,
             )
         )
     return connectors

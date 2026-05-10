@@ -415,6 +415,33 @@ def test_adzuna_credentials_are_read_from_environment(
     assert settings.adzuna_enabled is True
     assert settings.adzuna_app_id == "app-id"
     assert settings.adzuna_app_key == "app-key"
+    assert settings.adzuna_pages_per_search == 4
+
+
+def test_adzuna_pages_per_search_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("MIRANDOLE_ADZUNA_PAGES_PER_SEARCH", "7")
+
+    settings = Settings.from_env()
+
+    assert settings.adzuna_pages_per_search == 7
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "many"])
+def test_adzuna_pages_per_search_must_be_positive_integer(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("MIRANDOLE_ADZUNA_PAGES_PER_SEARCH", value)
+
+    with pytest.raises(ConfigError, match="MIRANDOLE_ADZUNA_PAGES_PER_SEARCH"):
+        Settings.from_env()
 
 
 def test_enabled_adzuna_requires_credentials(
