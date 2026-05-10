@@ -398,3 +398,34 @@ def test_enabled_france_travail_requires_credentials(
 
     with pytest.raises(ConfigError, match="CLIENT_ID is required"):
         Settings.from_env()
+
+
+def test_adzuna_credentials_are_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("MIRANDOLE_ADZUNA_ENABLED", "true")
+    monkeypatch.setenv("MIRANDOLE_ADZUNA_APP_ID", "app-id")
+    monkeypatch.setenv("MIRANDOLE_ADZUNA_APP_KEY", "app-key")
+
+    settings = Settings.from_env()
+
+    assert settings.adzuna_enabled is True
+    assert settings.adzuna_app_id == "app-id"
+    assert settings.adzuna_app_key == "app-key"
+
+
+def test_enabled_adzuna_requires_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MIRANDOLE_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)
+    monkeypatch.setenv("MIRANDOLE_DATABASE_PATH", "/tmp/mirandole.sqlite3")
+    monkeypatch.setenv("MIRANDOLE_ADZUNA_ENABLED", "true")
+    monkeypatch.delenv("MIRANDOLE_ADZUNA_APP_ID", raising=False)
+    monkeypatch.delenv("MIRANDOLE_ADZUNA_APP_KEY", raising=False)
+
+    with pytest.raises(ConfigError, match="APP_ID is required"):
+        Settings.from_env()

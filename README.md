@@ -26,6 +26,12 @@ export MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID
 export MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET
 export MIRANDOLE_FRANCE_TRAVAIL_ENABLED="true"
 
+read -r -p "Adzuna app id: " MIRANDOLE_ADZUNA_APP_ID
+read -r -s -p "Adzuna app key: " MIRANDOLE_ADZUNA_APP_KEY
+export MIRANDOLE_ADZUNA_APP_ID
+export MIRANDOLE_ADZUNA_APP_KEY
+export MIRANDOLE_ADZUNA_ENABLED="true"
+
 uv run uvicorn --factory mirandole.app:create_app --reload
 ```
 
@@ -49,6 +55,11 @@ Required environment variables:
   enabled.
 - `MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET`: required only when France Travail is
   enabled. Store the real value in the deployment environment only.
+- `MIRANDOLE_ADZUNA_ENABLED`: optional, defaults to `false`. Set `true` to
+  enable the Adzuna Connecteur de source.
+- `MIRANDOLE_ADZUNA_APP_ID`: required only when Adzuna is enabled.
+- `MIRANDOLE_ADZUNA_APP_KEY`: required only when Adzuna is enabled. Store the
+  real value in the deployment environment only.
 
 Recommended production command:
 
@@ -66,4 +77,5 @@ protege enabled.
 uv run ruff format --check .
 uv run ruff check .
 uv run pytest
+uv run pytest -m live_adzuna
 ```

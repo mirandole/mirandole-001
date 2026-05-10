@@ -187,6 +187,12 @@ class FranceTravailHttpResponse:
     body: bytes
 
 
+@dataclass(frozen=True)
+class AdzunaHttpResponse:
+    status_code: int
+    body: bytes
+
+
 class FranceTravailHttpClient:
     def post_form(
         self, url: str, data: dict[str, str], headers: dict[str, str]
@@ -218,6 +224,27 @@ class FranceTravailHttpClient:
             raise SourceConnectorUnavailable(
                 "France Travail est indisponible."
             ) from exc
+
+
+class AdzunaHttpClient:
+    def get_json(
+        self, url: str, params: dict[str, str], headers: dict[str, str]
+    ) -> AdzunaHttpResponse:
+        separator = "&" if "?" in url else "?"
+        request = Request(
+            f"{url}{separator}{urlencode(params)}", headers=headers, method="GET"
+        )
+        try:
+            with urlopen(request, timeout=15) as response:
+                return AdzunaHttpResponse(
+                    status_code=response.status, body=response.read()
+                )
+        except HTTPError as exc:
+            raise SourceConnectorUnavailable(
+                f"Adzuna a retourne HTTP {exc.code}."
+            ) from exc
+        except URLError as exc:
+            raise SourceConnectorUnavailable("Adzuna est indisponible.") from exc
 
 
 class FranceTravailConnector:
@@ -315,9 +342,7 @@ class FranceTravailConnector:
                 f"{localisation.strip()}."
             )
 
-        commune_code = _find_commune_code(
-            payload, searched_localisation=localisation
-        )
+        commune_code = _find_commune_code(payload, searched_localisation=localisation)
         if commune_code is None:
             raise SourceConnectorUnavailable(
                 f"France Travail n'a pas reconnu la localisation "
@@ -397,6 +422,98 @@ class FranceTravailConnector:
         )
 
 
+class AdzunaConnector:
+    source_name = "Adzuna"
+    search_url = "https://api.adzuna.com/v1/api/jobs/fr/search/1"
+    results_per_page = 20
+
+    def __init__(
+        self,
+        *,
+        app_id: str,
+        app_key: str,
+        http_client: AdzunaHttpClient | None = None,
+    ) -> None:
+        self.app_id = app_id
+        self.app_key = app_key
+        self.http_client = http_client or AdzunaHttpClient()
+
+    def map_rayon_source(self, rayon_demande_km: int) -> int:
+        return rayon_demande_km
+
+    def search(
+        self, *, intitule: str, localisation: str, rayon_demande_km: int
+    ) -> list[OfferResult]:
+        rayon_source_km = self.map_rayon_source(rayon_demande_km)
+        response = self.http_client.get_json(
+            self.search_url,
+            params={
+                "app_id": self.app_id,
+                "app_key": self.app_key,
+                "what": intitule,
+                "where": localisation,
+                "distance": str(rayon_source_km),
+                "results_per_page": str(self.results_per_page),
+                "content-type": "application/json",
+            },
+            headers={"Accept": "application/json"},
+        )
+        if response.status_code >= 400:
+            raise SourceConnectorUnavailable(
+                f"Adzuna a retourne HTTP {response.status_code}."
+            )
+
+        payload = _decode_json_payload(response.body, source_name=self.source_name)
+        raw_results = payload.get("results", [])
+        if not isinstance(raw_results, list):
+            raise SourceConnectorUnavailable("Adzuna a retourne un format inattendu.")
+
+        return [
+            self._normalize_offer(
+                raw_offer,
+                localisation=localisation,
+                rayon_source_km=rayon_source_km,
+            )
+            for raw_offer in raw_results
+            if isinstance(raw_offer, dict)
+        ]
+
+    def _normalize_offer(
+        self,
+        raw_offer: dict[str, object],
+        *,
+        localisation: str,
+        rayon_source_km: int,
+    ) -> OfferResult:
+        source_identifier = _string_value(raw_offer.get("id"))
+        source_url = _string_value(raw_offer.get("redirect_url")) or _adzuna_offer_url(
+            source_identifier
+        )
+        return OfferResult(
+            source_name=self.source_name,
+            source_radius_km=rayon_source_km,
+            title=_string_value(raw_offer.get("title")) or "Intitule non precise",
+            company=(
+                _nested_string(raw_offer, "company", "display_name")
+                or "Entreprise non precisee"
+            ),
+            city=(
+                _nested_string(raw_offer, "location", "display_name")
+                or _nested_first_string(raw_offer, "location", "area")
+                or localisation
+            ),
+            published_at=_date_value(raw_offer.get("created")),
+            contract_type=_normalize_adzuna_contract_type(
+                _string_value(raw_offer.get("contract_type"))
+                or _string_value(raw_offer.get("contract_time"))
+            ),
+            salary=_adzuna_salary(raw_offer),
+            description_source=_string_value(raw_offer.get("description")),
+            source_url=source_url,
+            source_identifier=source_identifier,
+        )
+
+
 def build_source_connectors(settings: Settings) -> list[SourceConnector]:
     connectors: list[SourceConnector] = [DemoSourceConnector()]
     if settings.france_travail_enabled:
@@ -406,6 +523,15 @@ def build_source_connectors(settings: Settings) -> list[SourceConnector]:
             FranceTravailConnector(
                 client_id=settings.france_travail_client_id,
                 client_secret=settings.france_travail_client_secret,
+            )
+        )
+    if settings.adzuna_enabled:
+        assert settings.adzuna_app_id is not None
+        assert settings.adzuna_app_key is not None
+        connectors.append(
+            AdzunaConnector(
+                app_id=settings.adzuna_app_id,
+                app_key=settings.adzuna_app_key,
             )
         )
     return connectors
@@ -633,6 +759,23 @@ def _nested_string(
     return _string_value(parent.get(child_key))
 
 
+def _nested_first_string(
+    payload: dict[str, object], parent_key: str, child_key: str
+) -> str | None:
+    parent = payload.get(parent_key)
+    if not isinstance(parent, dict):
+        return None
+    return _first_string_value(parent.get(child_key))
+
+
+def _numeric_value(value: object) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return value
+    return None
+
+
 def _date_value(value: object) -> str | None:
     raw_value = _string_value(value)
     if raw_value is None:
@@ -646,6 +789,12 @@ def _france_travail_offer_url(source_identifier: str | None) -> str:
     return (
         f"https://candidat.francetravail.fr/offres/recherche/detail/{source_identifier}"
     )
+
+
+def _adzuna_offer_url(source_identifier: str | None) -> str:
+    if source_identifier is None:
+        return "https://www.adzuna.fr/search"
+    return f"https://www.adzuna.fr/details/{source_identifier}"
 
 
 def _normalize_contract_type(value: str | None) -> str:
@@ -666,3 +815,32 @@ def _normalize_contract_type(value: str | None) -> str:
     if "alternance" in normalized_value or "apprentissage" in normalized_value:
         return "Alternance"
     return value
+
+
+def _normalize_adzuna_contract_type(value: str | None) -> str:
+    if value is None:
+        return "Non precise"
+
+    normalized_value = value.casefold().replace("_", " ")
+    if "permanent" in normalized_value:
+        return "CDI"
+    if "contract" in normalized_value:
+        return "CDD"
+    if "part time" in normalized_value:
+        return "Temps partiel"
+    if "full time" in normalized_value:
+        return "Temps plein"
+    return _normalize_contract_type(normalized_value)
+
+
+def _adzuna_salary(raw_offer: dict[str, object]) -> str | None:
+    salary_min = _numeric_value(raw_offer.get("salary_min"))
+    salary_max = _numeric_value(raw_offer.get("salary_max"))
+    if salary_min is None and salary_max is None:
+        return None
+    if salary_min is not None and salary_max is not None:
+        return f"{salary_min:g} - {salary_max:g} EUR"
+    if salary_min is not None:
+        return f"{salary_min:g} EUR minimum"
+    assert salary_max is not None
+    return f"{salary_max:g} EUR maximum"
