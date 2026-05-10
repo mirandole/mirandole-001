@@ -204,6 +204,111 @@ def test_echec_de_source_is_visible_without_failing_session(
     assert "Aucun Resultat d'offre" in response.text
 
 
+def test_opening_resultat_offre_marks_offre_consultee(tmp_path: Path) -> None:
+    app = create_app(make_settings(tmp_path / "app.sqlite3"))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        open_response = client.get("/offer-results/1/open", follow_redirects=False)
+        home_response = client.get("/", params={"session_id": "1"})
+
+    assert open_response.status_code == 303
+    assert open_response.headers["location"] == (
+        "https://example.test/offres/developpeur-backend-python"
+    )
+    assert "Offre consultee" in home_response.text
+
+
+def test_favorite_toggle_persists_and_vue_favoris_lists_offres_favorites(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    app = create_app(make_settings(database_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        toggle_response = client.post(
+            "/offer-results/1/favorite",
+            data={"return_to": "/?session_id=1"},
+            follow_redirects=False,
+        )
+        home_response = client.get("/", params={"session_id": "1"})
+
+    assert toggle_response.status_code == 303
+    assert toggle_response.headers["location"] == "/?session_id=1"
+    assert "Retirer des Offres favorites" in home_response.text
+
+    restarted_app = create_app(make_settings(database_path))
+    with TestClient(restarted_app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        favorites_response = client.get("/favorites")
+
+    assert favorites_response.status_code == 200
+    assert "Vue favoris" in favorites_response.text
+    assert "Developpeur backend Python" in favorites_response.text
+    assert "Ajoutee aux Offres favorites" in favorites_response.text
+    assert "Developpeur backend Data" not in favorites_response.text
+
+
+def test_vue_favoris_uses_default_tri_favoris(tmp_path: Path) -> None:
+    app = create_app(make_settings(tmp_path / "app.sqlite3"))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        client.post(
+            "/offer-results/1/favorite",
+            data={"return_to": "/?session_id=1"},
+            follow_redirects=False,
+        )
+        response = client.get("/favorites")
+
+    assert response.status_code == 200
+    assert '<option value="favorite_at" selected>' in response.text
+
+
 def test_missing_password_configuration_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MIRANDOLE_PASSWORD", raising=False)
     monkeypatch.setenv("MIRANDOLE_SESSION_SECRET", "x" * 32)

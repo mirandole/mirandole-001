@@ -99,8 +99,30 @@
       {% if results %}
         <ul class="results">
           {% for result in results %}
-            <li class="result-card">
-              <h2><a href="{{ result.source_url }}">{{ result.title }}</a></h2>
+            <li class="result-card {% if result.consulted_at %}consulted{% endif %}">
+              <div class="result-heading">
+                <h2>
+                  <a href="/offer-results/{{ result.id }}/open" rel="external">
+                    {{ result.title }}
+                  </a>
+                </h2>
+                <form
+                  method="post"
+                  action="/offer-results/{{ result.id }}/favorite"
+                  class="favorite-form"
+                >
+                  <input type="hidden" name="return_to" value="{{ request.url.path }}?{{ request.url.query }}">
+                  <button
+                    type="submit"
+                    class="favorite-button {% if result.favorite_at %}active{% endif %}"
+                    aria-label="{% if result.favorite_at %}Retirer des Offres favorites{% else %}Ajouter aux Offres favorites{% endif %}"
+                    title="{% if result.favorite_at %}Offre favorite{% else %}Ajouter aux Offres favorites{% endif %}"
+                  >{% if result.favorite_at %}&#9733;{% else %}&#9734;{% endif %}</button>
+                </form>
+              </div>
+              {% if result.consulted_at %}
+                <p class="meta">Offre consultee</p>
+              {% endif %}
               <p class="meta">
                 {{ result.company }} - {{ result.city }} - {{ result.contract_type }}
                 {% if result.published_at %}- {{ result.published_at }}{% else %}- Date de publication non precisee{% endif %}

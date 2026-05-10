@@ -76,6 +76,23 @@
         cursor: pointer;
       }
 
+      a {
+        color: #155e75;
+        font-weight: 650;
+      }
+
+      .top-nav {
+        display: flex;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .secondary-button {
+        border: 1px solid #b8c2d1;
+        background: #ffffff;
+        color: #1f2933;
+      }
+
       .actions {
         display: flex;
         gap: 12px;
@@ -143,6 +160,35 @@
         padding: 16px;
       }
 
+      .result-card.consulted {
+        background: #f6f7f9;
+      }
+
+      .result-heading {
+        display: flex;
+        gap: 12px;
+        align-items: start;
+        justify-content: space-between;
+      }
+
+      .favorite-form {
+        margin: 0;
+      }
+
+      .favorite-button {
+        min-width: 44px;
+        padding: 8px 10px;
+        border: 1px solid #b8c2d1;
+        background: #ffffff;
+        color: #1f2933;
+      }
+
+      .favorite-button.active {
+        border-color: #a16207;
+        background: #fef3c7;
+        color: #78350f;
+      }
+
       .result-card h2 {
         margin: 0 0 8px;
         font-size: 1.1rem;
@@ -173,6 +219,10 @@
   </head>
   <body>
     <main>
+      <nav class="top-nav" aria-label="Navigation principale">
+        <a href="/">Recherche d'offres</a>
+        <a href="/favorites">Vue favoris</a>
+      </nav>
       {% block content %}{% endblock %}
     </main>
   </body>
