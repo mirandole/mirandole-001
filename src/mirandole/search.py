@@ -597,6 +597,13 @@ def run_search_trace(
     failure_count = 0
     successful_source_names: set[str] = set()
     for source_connector in source_connectors:
+        LOGGER.info(
+            "Appel source %s pour intitule=%r localisation=%r rayon=%d km.",
+            source_connector.source_name,
+            session.intitule,
+            session.localisation,
+            session.rayon_demande_km,
+        )
         try:
             source_results = source_connector.search(
                 intitule=session.intitule,
@@ -604,6 +611,11 @@ def run_search_trace(
                 rayon_demande_km=session.rayon_demande_km,
             )
         except SourceConnectorUnavailable as exc:
+            LOGGER.warning(
+                "Echec source %s: %s",
+                source_connector.source_name,
+                exc,
+            )
             failure_count += 1
             save_source_failure(
                 database_path,
@@ -615,6 +627,11 @@ def run_search_trace(
 
         results.extend(source_results)
         successful_source_names.add(source_connector.source_name)
+        LOGGER.info(
+            "Source %s a retourne %d resultat(s).",
+            source_connector.source_name,
+            len(source_results),
+        )
 
     previous_session = find_previous_session_for_same_recherche(
         database_path,

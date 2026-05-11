@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -66,6 +68,7 @@ class _RedirectException(Exception):
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    _configure_logging_from_env()
     resolved_settings = settings or Settings.from_env()
 
     @asynccontextmanager
@@ -279,6 +282,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     return app
+
+
+def _configure_logging_from_env() -> None:
+    level_name = os.getenv("MIRANDOLE_LOG_LEVEL")
+    if not level_name:
+        return
+
+    level = getattr(logging, level_name.upper(), None)
+    if not isinstance(level, int):
+        level = logging.INFO
+
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s:%(name)s:%(message)s",
+        force=False,
+    )
+    logging.getLogger("mirandole").setLevel(level)
 
 
 def _select_session(
