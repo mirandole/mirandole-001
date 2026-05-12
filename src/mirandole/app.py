@@ -116,6 +116,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         recent_searches = list_recent_searches(current_settings.database_path)
         selected_session = _select_session(sessions, session_id)
         results = []
+        total_offer_count = 0
+        filtered_offer_count = 0
+        has_active_filters = _has_active_filters(
+            contract_type=contract_type,
+            experience_level=experience_level,
+            diploma_level=diploma_level,
+            source_name=source_name,
+        )
         source_filter_options = []
         failures = []
         if selected_session is not None:
@@ -124,9 +132,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             results = _filter_prod_mock_results(results, current_settings)
             results = _filter_hidden_results(results)
+            total_offer_count = len(results)
             source_filter_options = _source_filter_options(results)
             results = _filter_by_source(results, source_name)
             results = apply_result_filters(results, result_filters)
+            filtered_offer_count = len(results)
             failures = list_source_failures_for_session(
                 current_settings.database_path, selected_session.id
             )
@@ -141,6 +151,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "sessions": sessions,
                 "recent_searches": recent_searches,
                 "results": results,
+                "total_offer_count": total_offer_count,
+                "filtered_offer_count": filtered_offer_count,
+                "has_active_filters": has_active_filters,
                 "filters": result_filters,
                 "contract_filter_options": DEFAULT_INCLUDED_CONTRACT_TYPES
                 + EXCLUDED_CONTRACT_TYPES,
@@ -176,6 +189,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "sessions": sessions,
                     "recent_searches": recent_searches,
                     "results": [],
+                    "total_offer_count": 0,
+                    "filtered_offer_count": 0,
+                    "has_active_filters": False,
                     "filters": ResultFilters(),
                     "contract_filter_options": DEFAULT_INCLUDED_CONTRACT_TYPES
                     + EXCLUDED_CONTRACT_TYPES,
@@ -430,3 +446,13 @@ def _filter_by_source(
     return [
         result for result in results if result.source_name in selected_source_names
     ]
+
+
+def _has_active_filters(
+    *,
+    contract_type: list[str] | None,
+    experience_level: list[str] | None,
+    diploma_level: list[str] | None,
+    source_name: list[str] | None,
+) -> bool:
+    return any((contract_type, experience_level, diploma_level, source_name))

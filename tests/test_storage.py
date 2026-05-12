@@ -113,6 +113,11 @@ class FakeFranceTravailHttpClient:
                 body=dumps(self.location_payload).encode(),
             )
         self.search_params = params
+        if self.search_status_code == 204:
+            return FranceTravailHttpResponse(
+                status_code=self.search_status_code,
+                body=b"",
+            )
         return FranceTravailHttpResponse(
             status_code=self.search_status_code,
             body=dumps(self.search_payload).encode(),
@@ -404,6 +409,20 @@ def test_france_travail_connector_handles_missing_optional_fields() -> None:
     assert results[0].source_url == (
         "https://candidat.francetravail.fr/offres/recherche/detail/176DEF"
     )
+
+
+def test_france_travail_connector_treats_no_content_as_no_results() -> None:
+    connector = FranceTravailConnector(
+        client_id="client-id",
+        client_secret="client-secret",
+        http_client=FakeFranceTravailHttpClient(search_status_code=204),
+    )
+
+    results = connector.search(
+        intitule="Debian", localisation="Nantes", rayon_demande_km=10
+    )
+
+    assert results == []
 
 
 def test_france_travail_source_failure_does_not_fail_session(

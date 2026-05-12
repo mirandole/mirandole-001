@@ -66,6 +66,15 @@
         {{ selected_session.intitule }} a {{ selected_session.localisation }},
         rayon demande {{ selected_session.rayon_demande_km }} km.
       </p>
+      {% if has_active_filters %}
+        <p class="meta">
+          {{ total_offer_count }} offre{% if total_offer_count > 1 %}s{% endif %} recuperee{% if total_offer_count > 1 %}s{% endif %} pour cette recherche - {{ filtered_offer_count }} offre{% if filtered_offer_count > 1 %}s{% endif %} apres filtres.
+        </p>
+      {% else %}
+        <p class="meta">
+          {{ total_offer_count }} offre{% if total_offer_count > 1 %}s{% endif %} recuperee{% if total_offer_count > 1 %}s{% endif %} pour cette recherche.
+        </p>
+      {% endif %}
 
       {% for failure in failures %}
         <p class="failure">

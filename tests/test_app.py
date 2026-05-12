@@ -155,6 +155,7 @@ def test_utilisateur_principal_can_submit_recherche_offres(
 
     assert response.status_code == 200
     assert "Session de recherche #1" in response.text
+    assert "5 offres recuperees pour cette recherche." in response.text
     assert "Developpeur backend Python" in response.text
     assert "Atelier Hexagone" in response.text
     assert "Tags de competence: API, FastAPI, Python" in response.text
@@ -318,6 +319,8 @@ def test_filtres_de_resultats_are_applied_after_aggregation(
         )
 
     assert response.status_code == 200
+    assert "5 offres recuperees pour cette recherche" in response.text
+    assert "1 offre apres filtres." in response.text
     assert "Developpeur backend Stage web" in response.text
     assert "Developpeur backend Python" not in response.text
     assert "Remuneration indiquee" not in response.text
@@ -350,6 +353,8 @@ def test_filtre_de_resultats_can_filter_by_source(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "Source d'offres" in response.text
+    assert "2 offres recuperees pour cette recherche" in response.text
+    assert "1 offre apres filtres." in response.text
     assert 'name="source_name"' in response.text
     assert "Developpeur backend Adzuna" in response.text
     assert "Developpeur backend France Travail" not in response.text

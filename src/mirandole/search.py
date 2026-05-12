@@ -328,6 +328,8 @@ class FranceTravailConnector:
             raise SourceConnectorUnavailable(
                 f"France Travail a retourne HTTP {response.status_code}."
             )
+        if response.status_code == 204:
+            return []
 
         payload = _decode_json_payload(response.body, source_name=self.source_name)
         raw_results = payload.get("resultats", [])
