@@ -19,6 +19,7 @@ export MIRANDOLE_PASSWORD="change-this-local-password"
 export MIRANDOLE_SESSION_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export MIRANDOLE_DATABASE_PATH="./var/mirandole.sqlite3"
 export MIRANDOLE_COOKIE_SECURE="false"
+export PROD="false"
 
 read -r -p "France Travail client id: " MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID
 read -r -s -p "France Travail client secret: " MIRANDOLE_FRANCE_TRAVAIL_CLIENT_SECRET
@@ -31,6 +32,7 @@ read -r -s -p "Adzuna app key: " MIRANDOLE_ADZUNA_APP_KEY
 export MIRANDOLE_ADZUNA_APP_ID
 export MIRANDOLE_ADZUNA_APP_KEY
 export MIRANDOLE_ADZUNA_ENABLED="true"
+export MIRANDOLE_ADZUNA_PAGES_PER_SEARCH="4"
 
 uv run uvicorn --factory mirandole.app:create_app --reload
 ```
@@ -49,6 +51,9 @@ Required environment variables:
 - `MIRANDOLE_COOKIE_SECURE`: optional, defaults to `true`. Keep `true` when the
   Application deployee is served over HTTPS. Set `false` only for local HTTP
   development or an explicitly controlled WireGuard-only HTTP deployment.
+- `PROD`: optional, defaults to `false`. Set `true` in production to disable the
+  demo Source d'offres and prevent mock `https://example.test/offres/...`
+  results from being returned.
 - `MIRANDOLE_FRANCE_TRAVAIL_ENABLED`: optional, defaults to `false`. Set `true`
   to enable the France Travail Connecteur de source.
 - `MIRANDOLE_FRANCE_TRAVAIL_CLIENT_ID`: required only when France Travail is
@@ -60,10 +65,9 @@ Required environment variables:
 - `MIRANDOLE_ADZUNA_APP_ID`: required only when Adzuna is enabled.
 - `MIRANDOLE_ADZUNA_APP_KEY`: required only when Adzuna is enabled. Store the
   real value in the deployment environment only.
-- `MIRANDOLE_ADZUNA_RESULTS_PER_PAGE`: optional, defaults to `50`; must be
-  between `1` and `50`.
-- `MIRANDOLE_ADZUNA_MAX_RESULTS`: optional, defaults to `100`; limits how many
-  Adzuna resultats d'offre are fetched per Session de recherche.
+- `MIRANDOLE_ADZUNA_PAGES_PER_SEARCH`: optional, defaults to `4`. Number of
+  Adzuna result pages to fetch per search. Each page requests 50 offers and the
+  connector stops early when Adzuna returns a partial page.
 
 Recommended production command:
 
@@ -78,8 +82,8 @@ protege enabled.
 ## Checks
 
 ```bash
-uv run --extra dev ruff format --check .
-uv run --extra dev ruff check .
-uv run --extra dev pytest
-uv run --extra dev pytest -m live_adzuna
+uv run ruff format --check .
+uv run ruff check .
+uv run pytest
+uv run pytest -m live_adzuna
 ```

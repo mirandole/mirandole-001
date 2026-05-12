@@ -8,4 +8,6 @@ var/
 logs/
 ralph/
 france-travail-api-documentation.json
+optioncarriere-api.mhtml
 .env.ralph.local
+*.swp

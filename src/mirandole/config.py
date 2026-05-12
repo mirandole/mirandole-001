@@ -16,11 +16,25 @@ def _read_required_env(name: str) -> str:
     return value
 
 
+def _read_positive_int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed_value = int(value)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a positive integer") from exc
+    if parsed_value < 1:
+        raise ConfigError(f"{name} must be a positive integer")
+    return parsed_value
+
+
 @dataclass(frozen=True)
 class Settings:
     password: str
     session_secret: str
     database_path: Path
+    prod: bool = False
     cookie_secure: bool = True
     france_travail_enabled: bool = False
     france_travail_client_id: str | None = None
@@ -36,6 +50,7 @@ class Settings:
         password = _read_required_env("MIRANDOLE_PASSWORD")
         session_secret = _read_required_env("MIRANDOLE_SESSION_SECRET")
         database_path = Path(_read_required_env("MIRANDOLE_DATABASE_PATH"))
+        prod = os.getenv("PROD", "false").lower()
         cookie_secure = os.getenv("MIRANDOLE_COOKIE_SECURE", "true").lower()
         france_travail_enabled = os.getenv(
             "MIRANDOLE_FRANCE_TRAVAIL_ENABLED", "false"
@@ -58,10 +73,14 @@ class Settings:
             raise ConfigError("MIRANDOLE_PASSWORD must be at least 12 characters")
         if len(session_secret) < 32:
             raise ConfigError("MIRANDOLE_SESSION_SECRET must be at least 32 characters")
+        if prod not in {"true", "false"}:
+            raise ConfigError("PROD must be true or false")
         if cookie_secure not in {"true", "false"}:
             raise ConfigError("MIRANDOLE_COOKIE_SECURE must be true or false")
         if france_travail_enabled not in {"true", "false"}:
             raise ConfigError("MIRANDOLE_FRANCE_TRAVAIL_ENABLED must be true or false")
+        if adzuna_enabled not in {"true", "false"}:
+            raise ConfigError("MIRANDOLE_ADZUNA_ENABLED must be true or false")
         if adzuna_enabled not in {"true", "false"}:
             raise ConfigError("MIRANDOLE_ADZUNA_ENABLED must be true or false")
         if france_travail_enabled == "true" and (
@@ -103,6 +122,7 @@ class Settings:
             password=password,
             session_secret=session_secret,
             database_path=database_path,
+            prod=prod == "true",
             cookie_secure=cookie_secure == "true",
             france_travail_enabled=france_travail_enabled == "true",
             france_travail_client_id=france_travail_client_id,
