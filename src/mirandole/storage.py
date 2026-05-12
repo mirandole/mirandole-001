@@ -49,6 +49,7 @@ class StoredOfferResult:
     inactive: bool
     consulted_at: str | None = None
     favorite_at: str | None = None
+    hidden_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +144,8 @@ def initialize_storage(database_path: Path) -> None:
             CREATE TABLE IF NOT EXISTS offer_user_states (
                 result_identity TEXT PRIMARY KEY,
                 consulted_at TEXT,
-                favorite_at TEXT
+                favorite_at TEXT,
+                hidden_at TEXT
             )
             """
         )
@@ -166,6 +168,7 @@ def initialize_storage(database_path: Path) -> None:
         _ensure_column(
             connection, "offer_results", "is_new", "INTEGER NOT NULL DEFAULT 0"
         )
+        _ensure_column(connection, "offer_user_states", "hidden_at", "TEXT")
 
 
 def _connect(database_path: Path) -> sqlite3.Connection:
@@ -436,7 +439,8 @@ def save_inactive_offer_results_for_missing_identities(
                 latest_offer_results.is_new,
                 latest_offer_results.inactive,
                 NULL AS consulted_at,
-                NULL AS favorite_at
+                NULL AS favorite_at,
+                NULL AS hidden_at
             FROM offer_results AS latest_offer_results
             INNER JOIN (
                 SELECT offer_results.result_identity, MAX(offer_results.id) AS id
@@ -615,7 +619,8 @@ def list_offer_results_for_session(
                 offer_results.is_new,
                 offer_results.inactive,
                 offer_user_states.consulted_at,
-                offer_user_states.favorite_at
+                offer_user_states.favorite_at,
+                offer_user_states.hidden_at
             FROM offer_results
             LEFT JOIN offer_user_states
                 ON offer_user_states.result_identity = offer_results.result_identity
@@ -694,6 +699,40 @@ def toggle_offer_result_favorite(
     return not is_favorite
 
 
+def toggle_offer_result_hidden(
+    database_path: Path, offer_result_id: int
+) -> bool | None:
+    with _connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                offer_results.result_identity,
+                offer_user_states.hidden_at
+            FROM offer_results
+            LEFT JOIN offer_user_states
+                ON offer_user_states.result_identity = offer_results.result_identity
+            WHERE offer_results.id = ?
+            """,
+            (offer_result_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        is_hidden = row["hidden_at"] is not None
+        next_hidden_at = None if is_hidden else _now_isoformat()
+        connection.execute(
+            """
+            INSERT INTO offer_user_states (result_identity, hidden_at)
+            VALUES (?, ?)
+            ON CONFLICT(result_identity) DO UPDATE SET
+                hidden_at = excluded.hidden_at
+            """,
+            (row["result_identity"], next_hidden_at),
+        )
+
+    return not is_hidden
+
+
 def list_favorite_offer_results(
     database_path: Path, *, sort: str = "favorite_at"
 ) -> list[StoredOfferResult]:
@@ -733,7 +772,8 @@ def list_favorite_offer_results(
                 latest_offer_results.is_new,
                 latest_offer_results.inactive,
                 offer_user_states.consulted_at,
-                offer_user_states.favorite_at
+                offer_user_states.favorite_at,
+                offer_user_states.hidden_at
             FROM offer_results AS latest_offer_results
             INNER JOIN (
                 SELECT result_identity, MAX(id) AS id
@@ -745,7 +785,55 @@ def list_favorite_offer_results(
                 ON offer_user_states.result_identity =
                     latest_offer_results.result_identity
             WHERE offer_user_states.favorite_at IS NOT NULL
+              AND offer_user_states.hidden_at IS NULL
             ORDER BY {order_by}
+            """
+        ).fetchall()
+
+    return [_stored_offer_result_from_row(row) for row in rows]
+
+
+def list_hidden_offer_results(database_path: Path) -> list[StoredOfferResult]:
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                latest_offer_results.id,
+                latest_offer_results.session_id,
+                latest_offer_results.source_name,
+                latest_offer_results.source_radius_km,
+                latest_offer_results.result_identity,
+                latest_offer_results.title,
+                latest_offer_results.company,
+                latest_offer_results.city,
+                latest_offer_results.published_at,
+                latest_offer_results.contract_type,
+                latest_offer_results.salary,
+                latest_offer_results.description_source,
+                latest_offer_results.skill_tags,
+                latest_offer_results.experience_level,
+                latest_offer_results.diploma_level,
+                latest_offer_results.source_url,
+                latest_offer_results.remote_text,
+                latest_offer_results.is_new,
+                latest_offer_results.inactive,
+                offer_user_states.consulted_at,
+                offer_user_states.favorite_at,
+                offer_user_states.hidden_at
+            FROM offer_results AS latest_offer_results
+            INNER JOIN (
+                SELECT result_identity, MAX(id) AS id
+                FROM offer_results
+                GROUP BY result_identity
+            ) AS latest_ids
+                ON latest_ids.id = latest_offer_results.id
+            INNER JOIN offer_user_states
+                ON offer_user_states.result_identity =
+                    latest_offer_results.result_identity
+            WHERE offer_user_states.hidden_at IS NOT NULL
+            ORDER BY
+                offer_user_states.hidden_at DESC,
+                latest_offer_results.id DESC
             """
         ).fetchall()
 
@@ -800,6 +888,7 @@ def _stored_offer_result_from_row(row: sqlite3.Row) -> StoredOfferResult:
         inactive=bool(row["inactive"]),
         consulted_at=row["consulted_at"],
         favorite_at=row["favorite_at"],
+        hidden_at=row["hidden_at"],
     )
 
 

@@ -23,12 +23,14 @@ from mirandole.search import (
 from mirandole.storage import (
     initialize_storage,
     list_favorite_offer_results,
+    list_hidden_offer_results,
     list_offer_results_for_session,
     list_recent_searches,
     list_search_sessions,
     list_source_failures_for_session,
     mark_offer_result_consulted,
     toggle_offer_result_favorite,
+    toggle_offer_result_hidden,
 )
 
 
@@ -1019,6 +1021,76 @@ def test_offer_favorite_toggle_persists_in_stockage_applicatif(
 
     assert toggle_offer_result_favorite(database_path, result.id) is False
     assert list_favorite_offer_results(database_path) == []
+
+
+def test_offer_hidden_toggle_persists_in_stockage_applicatif(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=30,
+    )
+    result = list_offer_results_for_session(database_path, trace.session.id)[0]
+
+    assert toggle_offer_result_hidden(database_path, result.id) is True
+
+    initialize_storage(database_path)
+    hidden_results = list_hidden_offer_results(database_path)
+    updated_result = list_offer_results_for_session(database_path, trace.session.id)[0]
+    assert [hidden.result_identity for hidden in hidden_results] == [
+        "Source demo:demo-developpeur-backend-1"
+    ]
+    assert updated_result.hidden_at is not None
+
+    assert toggle_offer_result_hidden(database_path, result.id) is False
+    assert list_hidden_offer_results(database_path) == []
+
+
+def test_hidden_offer_results_are_sorted_by_hidden_date(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stockage" / "app.sqlite3"
+    initialize_storage(database_path)
+    trace = run_search_trace(
+        database_path,
+        intitule="Developpeur backend",
+        localisation="Nantes",
+        rayon_demande_km=30,
+    )
+    results = list_offer_results_for_session(database_path, trace.session.id)
+    python_result = results[0]
+    data_result = results[2]
+    toggle_offer_result_hidden(database_path, python_result.id)
+    toggle_offer_result_hidden(database_path, data_result.id)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            UPDATE offer_user_states
+            SET hidden_at = ?
+            WHERE result_identity = ?
+            """,
+            ("2026-05-10T10:00:00+00:00", python_result.result_identity),
+        )
+        connection.execute(
+            """
+            UPDATE offer_user_states
+            SET hidden_at = ?
+            WHERE result_identity = ?
+            """,
+            ("2026-05-10T11:00:00+00:00", data_result.result_identity),
+        )
+
+    hidden_results = list_hidden_offer_results(database_path)
+
+    assert [result.title for result in hidden_results] == [
+        "Developpeur backend Data",
+        "Developpeur backend Python",
+    ]
 
 
 def test_favorite_offer_results_support_both_tri_favoris_modes(

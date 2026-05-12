@@ -2,23 +2,8 @@
 
 {% block content %}
 <div class="stack">
-  <section class="panel" aria-labelledby="favorites-title">
-    <h1 id="favorites-title">Vue favoris</h1>
-
-    <form method="get" action="/favorites" class="filter-form">
-      <label for="sort">Tri des favoris</label>
-      <select id="sort" name="sort">
-        <option value="favorite_at" {% if sort == "favorite_at" %}selected{% endif %}>
-          Date d'ajout en favori
-        </option>
-        <option value="published_at" {% if sort == "published_at" %}selected{% endif %}>
-          Date de publication
-        </option>
-      </select>
-      <div class="actions compact">
-        <button type="submit">Appliquer le tri</button>
-      </div>
-    </form>
+  <section class="panel" aria-labelledby="hidden-title">
+    <h1 id="hidden-title">Offres masquees</h1>
 
     {% if results %}
       <ul class="results">
@@ -44,10 +29,10 @@
                   <input type="hidden" name="return_to" value="{{ request.url.path }}?{{ request.url.query }}">
                   <button
                     type="submit"
-                    class="hide-button"
-                    aria-label="Masquer ce Resultat d'offre"
-                    title="Masquer"
-                  >&#10005;</button>
+                    class="hide-button active"
+                    aria-label="Retirer de la vue des Offres masquees"
+                    title="Retirer du masquage"
+                  >&#8634;</button>
                 </form>
                 <form
                   method="post"
@@ -58,15 +43,18 @@
                   <input type="hidden" name="return_to" value="{{ request.url.path }}?{{ request.url.query }}">
                   <button
                     type="submit"
-                    class="favorite-button active"
-                    aria-label="Retirer des Offres favorites"
-                    title="Offre favorite"
-                  >&#9733;</button>
+                    class="favorite-button {% if result.favorite_at %}active{% endif %}"
+                    aria-label="{% if result.favorite_at %}Retirer des Offres favorites{% else %}Ajouter aux Offres favorites{% endif %}"
+                    title="{% if result.favorite_at %}Offre favorite{% else %}Ajouter aux Offres favorites{% endif %}"
+                  >{% if result.favorite_at %}&#9733;{% else %}&#9734;{% endif %}</button>
                 </form>
               </div>
             </div>
             {% if result.consulted_at %}
               <p class="meta">Offre consultee</p>
+            {% endif %}
+            {% if result.favorite_at %}
+              <p class="meta favorite-meta">Offre favorite</p>
             {% endif %}
             {% if result.inactive %}
               <p class="meta">Offre inactive</p>
@@ -79,7 +67,7 @@
               {{ result.source_name }} - Identite de resultat {{ result.result_identity }}
               - Rayon source {{ result.source_radius_km }} km
             </p>
-            <p class="meta">Ajoutee aux Offres favorites: {{ result.favorite_at }}</p>
+            <p class="meta">Masquee le: {{ result.hidden_at }}</p>
             <p class="meta">
               Niveau d'experience demande: {{ result.experience_level }} -
               Niveau de diplome demande: {{ result.diploma_level }}
@@ -97,7 +85,7 @@
         {% endfor %}
       </ul>
     {% else %}
-      <p>Aucune Offre favorite.</p>
+      <p>Aucune Offre masquee.</p>
     {% endif %}
 
     <form method="post" action="/logout" class="actions">

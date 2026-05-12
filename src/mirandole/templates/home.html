@@ -117,6 +117,22 @@
             </label>
           {% endfor %}
         </fieldset>
+        {% if source_filter_options %}
+          <fieldset>
+            <legend>Source d'offres</legend>
+            {% for option in source_filter_options %}
+              <label class="choice">
+                <input
+                  type="checkbox"
+                  name="source_name"
+                  value="{{ option }}"
+                  {% if option in selected_source_names %}checked{% endif %}
+                >
+                {{ option }}
+              </label>
+            {% endfor %}
+          </fieldset>
+        {% endif %}
         <div class="actions compact">
           <button type="submit">Appliquer les filtres</button>
         </div>
@@ -136,25 +152,42 @@
                     {{ result.title }}
                   </a>
                 </h2>
-                <form
-                  method="post"
-                  action="/offer-results/{{ result.id }}/favorite"
-                  class="favorite-form"
-                >
-                  <input type="hidden" name="return_to" value="{{ request.url.path }}?{{ request.url.query }}">
-                  <button
-                    type="submit"
-                    class="favorite-button {% if result.favorite_at %}active{% endif %}"
-                    aria-label="{% if result.favorite_at %}Retirer des Offres favorites{% else %}Ajouter aux Offres favorites{% endif %}"
-                    title="{% if result.favorite_at %}Offre favorite{% else %}Ajouter aux Offres favorites{% endif %}"
-                  >{% if result.favorite_at %}&#9733;{% else %}&#9734;{% endif %}</button>
-                </form>
+                <div class="result-actions">
+                  <form
+                    method="post"
+                    action="/offer-results/{{ result.id }}/hidden"
+                    class="favorite-form"
+                    data-offer-action="hidden"
+                  >
+                    <input type="hidden" name="return_to" value="{{ request.url.path }}?{{ request.url.query }}">
+                    <button
+                      type="submit"
+                      class="hide-button"
+                      aria-label="Masquer ce Resultat d'offre"
+                      title="Masquer"
+                    >&#10005;</button>
+                  </form>
+                  <form
+                    method="post"
+                    action="/offer-results/{{ result.id }}/favorite"
+                    class="favorite-form"
+                    data-offer-action="favorite"
+                  >
+                    <input type="hidden" name="return_to" value="{{ request.url.path }}?{{ request.url.query }}">
+                    <button
+                      type="submit"
+                      class="favorite-button {% if result.favorite_at %}active{% endif %}"
+                      aria-label="{% if result.favorite_at %}Retirer des Offres favorites{% else %}Ajouter aux Offres favorites{% endif %}"
+                      title="{% if result.favorite_at %}Offre favorite{% else %}Ajouter aux Offres favorites{% endif %}"
+                    >{% if result.favorite_at %}&#9733;{% else %}&#9734;{% endif %}</button>
+                  </form>
+                </div>
               </div>
               {% if result.consulted_at %}
                 <p class="meta">Offre consultee</p>
               {% endif %}
               {% if result.favorite_at %}
-                <p class="meta">Offre favorite</p>
+                <p class="meta favorite-meta">Offre favorite</p>
               {% endif %}
               {% if result.is_new %}
                 <p class="meta">Offre nouvelle</p>

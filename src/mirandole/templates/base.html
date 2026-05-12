@@ -164,6 +164,12 @@
         background: #f6f7f9;
       }
 
+      .result-card.removing {
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 140ms ease, transform 140ms ease;
+      }
+
       .result-heading {
         display: flex;
         gap: 12px;
@@ -175,11 +181,24 @@
         margin: 0;
       }
 
+      .result-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .hide-button,
       .favorite-button {
         min-width: 44px;
         padding: 8px 10px;
         border: 1px solid #b8c2d1;
         background: #ffffff;
+        color: #1f2933;
+      }
+
+      .hide-button.active {
+        border-color: #4b5563;
+        background: #eef2f7;
         color: #1f2933;
       }
 
@@ -222,8 +241,148 @@
       <nav class="top-nav" aria-label="Navigation principale">
         <a href="/">Recherche d'offres</a>
         <a href="/favorites">Vue favoris</a>
+        <a href="/hidden">Offres masquees</a>
       </nav>
       {% block content %}{% endblock %}
     </main>
+    <script>
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        const scrollY = Number.parseInt(params.get("scroll_y") || "", 10);
+        if (Number.isFinite(scrollY) && scrollY >= 0) {
+          window.scrollTo({ top: scrollY, left: 0 });
+          params.delete("scroll_y");
+          const query = params.toString();
+          const cleanUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+          window.history.replaceState(null, "", cleanUrl);
+        }
+
+        for (const form of document.querySelectorAll('form[action^="/offer-results/"]')) {
+          form.addEventListener("submit", () => {
+            let input = form.querySelector('input[name="scroll_y"]');
+            if (!input) {
+              input = document.createElement("input");
+              input.type = "hidden";
+              input.name = "scroll_y";
+              form.append(input);
+            }
+            input.value = String(Math.max(0, Math.round(window.scrollY)));
+          });
+        }
+
+        for (const form of document.querySelectorAll("form[data-offer-action]")) {
+          form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const button = form.querySelector("button");
+            if (button) {
+              button.disabled = true;
+            }
+
+            try {
+              const formData = new FormData(form);
+              formData.set("return_to", `${window.location.pathname}${window.location.search}`);
+              formData.set("scroll_y", String(Math.max(0, Math.round(window.scrollY))));
+
+              const response = await fetch(form.action, {
+                method: form.method,
+                body: formData,
+                credentials: "same-origin",
+                headers: {
+                  "X-Mirandole-Async": "1",
+                },
+              });
+
+              if (!response.ok) {
+                form.submit();
+                return;
+              }
+
+              updateOfferCard(form);
+            } catch {
+              form.submit();
+            } finally {
+              if (button && document.contains(button)) {
+                button.disabled = false;
+              }
+            }
+          });
+        }
+
+        function updateOfferCard(form) {
+          const action = form.dataset.offerAction;
+          if (action === "hidden") {
+            removeOfferCard(form);
+            return;
+          }
+
+          if (action === "favorite") {
+            updateFavoriteState(form);
+          }
+        }
+
+        function updateFavoriteState(form) {
+          const card = form.closest(".result-card");
+          const button = form.querySelector(".favorite-button");
+          if (!card || !button) {
+            return;
+          }
+
+          const isFavorite = button.classList.toggle("active");
+          button.textContent = isFavorite ? "★" : "☆";
+          button.setAttribute(
+            "aria-label",
+            isFavorite ? "Retirer des Offres favorites" : "Ajouter aux Offres favorites",
+          );
+          button.setAttribute(
+            "title",
+            isFavorite ? "Offre favorite" : "Ajouter aux Offres favorites",
+          );
+
+          if (window.location.pathname === "/favorites" && !isFavorite) {
+            removeOfferCard(form);
+            return;
+          }
+
+          let favoriteMeta = card.querySelector(".favorite-meta");
+          if (isFavorite && !favoriteMeta) {
+            favoriteMeta = document.createElement("p");
+            favoriteMeta.className = "meta favorite-meta";
+            favoriteMeta.textContent = "Offre favorite";
+            card.querySelector(".result-heading")?.after(favoriteMeta);
+          } else if (!isFavorite && favoriteMeta) {
+            favoriteMeta.remove();
+          }
+        }
+
+        function removeOfferCard(form) {
+          const card = form.closest(".result-card");
+          const list = card?.parentElement;
+          if (!card || !list) {
+            return;
+          }
+
+          card.classList.add("removing");
+          window.setTimeout(() => {
+            card.remove();
+            if (!list.querySelector(".result-card")) {
+              const emptyMessage = document.createElement("p");
+              emptyMessage.textContent = emptyMessageForCurrentPage();
+              list.replaceWith(emptyMessage);
+            }
+          }, 140);
+        }
+
+        function emptyMessageForCurrentPage() {
+          if (window.location.pathname === "/favorites") {
+            return "Aucune Offre favorite.";
+          }
+          if (window.location.pathname === "/hidden") {
+            return "Aucune Offre masquee.";
+          }
+          return "Aucun Resultat d'offre pour cette Session de recherche.";
+        }
+      })();
+    </script>
   </body>
 </html>

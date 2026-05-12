@@ -5,6 +5,32 @@ from fastapi.testclient import TestClient
 
 from mirandole.app import create_app
 from mirandole.config import ConfigError, Settings
+from mirandole.search import OfferResult, run_search_trace
+
+
+class StaticSourceConnector:
+    def __init__(self, source_name: str, source_identifier: str) -> None:
+        self.source_name = source_name
+        self.source_identifier = source_identifier
+
+    def search(
+        self, *, intitule: str, localisation: str, rayon_demande_km: int
+    ) -> list[OfferResult]:
+        return [
+            OfferResult(
+                source_name=self.source_name,
+                source_radius_km=rayon_demande_km,
+                title=f"{intitule} {self.source_name}",
+                company="Entreprise test",
+                city=localisation,
+                published_at="2026-05-10",
+                contract_type="CDI",
+                salary=None,
+                description_source="Developpement Python.",
+                source_url=f"https://example.test/{self.source_identifier}",
+                source_identifier=self.source_identifier,
+            )
+        ]
 
 
 def make_settings(
@@ -297,6 +323,39 @@ def test_filtres_de_resultats_are_applied_after_aggregation(
     assert "Remuneration indiquee" not in response.text
 
 
+def test_filtre_de_resultats_can_filter_by_source(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    app = create_app(make_settings(database_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        run_search_trace(
+            database_path,
+            intitule="Developpeur backend",
+            localisation="Nantes",
+            rayon_demande_km=30,
+            connectors=[
+                StaticSourceConnector("France Travail", "france-travail-1"),
+                StaticSourceConnector("Adzuna", "adzuna-1"),
+            ],
+        )
+        response = client.get(
+            "/",
+            params={"session_id": "1", "source_name": "Adzuna"},
+        )
+
+    assert response.status_code == 200
+    assert "Source d'offres" in response.text
+    assert 'name="source_name"' in response.text
+    assert "Developpeur backend Adzuna" in response.text
+    assert "Developpeur backend France Travail" not in response.text
+    assert "France Travail" in response.text
+
+
 def test_echec_de_source_is_visible_without_failing_session(
     tmp_path: Path,
 ) -> None:
@@ -401,6 +460,128 @@ def test_favorite_toggle_persists_and_vue_favoris_lists_offres_favorites(
     assert 'rel="external noopener noreferrer"' in favorites_response.text
     assert "Ajoutee aux Offres favorites" in favorites_response.text
     assert "Developpeur backend Data" not in favorites_response.text
+
+
+def test_offer_state_redirect_preserves_scroll_position(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    app = create_app(make_settings(database_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        favorite_response = client.post(
+            "/offer-results/1/favorite",
+            data={"return_to": "/?session_id=1", "scroll_y": "620"},
+            follow_redirects=False,
+        )
+        hidden_response = client.post(
+            "/offer-results/2/hidden",
+            data={"return_to": "/?session_id=1&scroll_y=120", "scroll_y": "640"},
+            follow_redirects=False,
+        )
+
+    assert favorite_response.status_code == 303
+    assert favorite_response.headers["location"] == "/?session_id=1&scroll_y=620"
+    assert hidden_response.status_code == 303
+    assert hidden_response.headers["location"] == "/?session_id=1&scroll_y=640"
+
+
+def test_offer_state_async_actions_do_not_redirect(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    app = create_app(make_settings(database_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        favorite_response = client.post(
+            "/offer-results/1/favorite",
+            data={"return_to": "/?session_id=1", "scroll_y": "620"},
+            headers={"X-Mirandole-Async": "1"},
+            follow_redirects=False,
+        )
+        hidden_response = client.post(
+            "/offer-results/2/hidden",
+            data={"return_to": "/?session_id=1", "scroll_y": "640"},
+            headers={"X-Mirandole-Async": "1"},
+            follow_redirects=False,
+        )
+
+    assert favorite_response.status_code == 204
+    assert "location" not in favorite_response.headers
+    assert hidden_response.status_code == 204
+    assert "location" not in hidden_response.headers
+
+
+def test_offer_hidden_toggle_hides_result_and_lists_offres_masquees(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    app = create_app(make_settings(database_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"password": "correct horse battery staple"},
+            follow_redirects=False,
+        )
+        client.post(
+            "/",
+            data={
+                "intitule": "Developpeur backend",
+                "localisation": "Nantes",
+                "rayon_demande_km": "30",
+            },
+            follow_redirects=False,
+        )
+        favorite_response = client.post(
+            "/offer-results/1/favorite",
+            data={"return_to": "/?session_id=1"},
+            follow_redirects=False,
+        )
+        hide_response = client.post(
+            "/offer-results/1/hidden",
+            data={"return_to": "/?session_id=1"},
+            follow_redirects=False,
+        )
+        home_response = client.get("/", params={"session_id": "1"})
+        favorites_response = client.get("/favorites")
+        hidden_response = client.get("/hidden")
+
+    assert favorite_response.status_code == 303
+    assert hide_response.status_code == 303
+    assert hide_response.headers["location"] == "/?session_id=1"
+    assert "Developpeur backend Python" not in home_response.text
+    assert "Developpeur backend Python" not in favorites_response.text
+    assert hidden_response.status_code == 200
+    assert "Offres masquees" in hidden_response.text
+    assert "Developpeur backend Python" in hidden_response.text
+    assert "Offre favorite" in hidden_response.text
+    assert "Masquee le" in hidden_response.text
+    assert "Retirer du masquage" in hidden_response.text
 
 
 def test_vue_favoris_uses_default_tri_favoris(tmp_path: Path) -> None:
