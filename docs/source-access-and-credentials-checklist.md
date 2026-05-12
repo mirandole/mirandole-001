@@ -191,3 +191,9 @@ References:
 3. Jooble: straightforward but needs a product decision for 100 km because max documented radius is 80 km.
 4. Adzuna: useful source, but confirm radius support and attribution/licence constraints before implementation.
 5. Jobijoba: wait for partner docs.
+
+## API Documentation Links
+
+- [Adzuna API](https://developer.adzuna.com/activedocs#/default/search)
+- [Optioncarriere API](https://www.optioncarriere.com/partners/api)
+- [France Travail API](https://francetravail.io/produits-partages/catalogue/offres-emploi/documentation#/api-reference/operations/recupererListeOffre)
