@@ -42,8 +42,7 @@ class Settings:
     adzuna_enabled: bool = False
     adzuna_app_id: str | None = None
     adzuna_app_key: str | None = None
-    adzuna_results_per_page: int = 50
-    adzuna_max_results: int = 100
+    adzuna_pages_per_search: int = 4
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -62,11 +61,8 @@ class Settings:
         adzuna_enabled = os.getenv("MIRANDOLE_ADZUNA_ENABLED", "false").lower()
         adzuna_app_id = os.getenv("MIRANDOLE_ADZUNA_APP_ID")
         adzuna_app_key = os.getenv("MIRANDOLE_ADZUNA_APP_KEY")
-        adzuna_results_per_page = _read_optional_int(
-            "MIRANDOLE_ADZUNA_RESULTS_PER_PAGE", default=50
-        )
-        adzuna_max_results = _read_optional_int(
-            "MIRANDOLE_ADZUNA_MAX_RESULTS", default=100
+        adzuna_pages_per_search = _read_positive_int_env(
+            "MIRANDOLE_ADZUNA_PAGES_PER_SEARCH", 4
         )
 
         if len(password) < 12:
@@ -79,8 +75,6 @@ class Settings:
             raise ConfigError("MIRANDOLE_COOKIE_SECURE must be true or false")
         if france_travail_enabled not in {"true", "false"}:
             raise ConfigError("MIRANDOLE_FRANCE_TRAVAIL_ENABLED must be true or false")
-        if adzuna_enabled not in {"true", "false"}:
-            raise ConfigError("MIRANDOLE_ADZUNA_ENABLED must be true or false")
         if adzuna_enabled not in {"true", "false"}:
             raise ConfigError("MIRANDOLE_ADZUNA_ENABLED must be true or false")
         if france_travail_enabled == "true" and (
@@ -111,12 +105,6 @@ class Settings:
                 "MIRANDOLE_ADZUNA_APP_KEY is required when "
                 "MIRANDOLE_ADZUNA_ENABLED is true"
             )
-        if adzuna_results_per_page < 1 or adzuna_results_per_page > 50:
-            raise ConfigError(
-                "MIRANDOLE_ADZUNA_RESULTS_PER_PAGE must be between 1 and 50"
-            )
-        if adzuna_max_results < 1:
-            raise ConfigError("MIRANDOLE_ADZUNA_MAX_RESULTS must be at least 1")
 
         return cls(
             password=password,
@@ -130,16 +118,5 @@ class Settings:
             adzuna_enabled=adzuna_enabled == "true",
             adzuna_app_id=adzuna_app_id,
             adzuna_app_key=adzuna_app_key,
-            adzuna_results_per_page=adzuna_results_per_page,
-            adzuna_max_results=adzuna_max_results,
+            adzuna_pages_per_search=adzuna_pages_per_search,
         )
-
-
-def _read_optional_int(name: str, *, default: int) -> int:
-    raw_value = os.getenv(name)
-    if raw_value is None or not raw_value.strip():
-        return default
-    try:
-        return int(raw_value)
-    except ValueError as exc:
-        raise ConfigError(f"{name} must be an integer") from exc

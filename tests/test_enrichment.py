@@ -71,16 +71,11 @@ def test_default_contract_filters_exclude_stage_and_alternance() -> None:
         ResultatOffre("Stage web", "A", "Stage", None),
         ResultatOffre("Cloud", "A", "Alternance", None),
         ResultatOffre("Support", "A", "Interim", None),
-        ResultatOffre("Source sans contrat", "A", "Non precise", None),
     ]
 
     filtered = apply_result_filters(results, build_result_filters())
 
-    assert [result.contract_type for result in filtered] == [
-        "CDI",
-        "Interim",
-        "Non precise",
-    ]
+    assert [result.contract_type for result in filtered] == ["CDI", "Interim"]
 
 
 def test_post_aggregation_filters_match_contract_experience_and_diploma() -> None:

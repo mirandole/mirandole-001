@@ -750,21 +750,6 @@ def _first_string_value(value: object) -> str | None:
     return None
 
 
-def _nested_value(
-    payload: dict[str, object], parent_key: str, child_key: str
-) -> object | None:
-    parent = payload.get(parent_key)
-    if not isinstance(parent, dict):
-        return None
-    return parent.get(child_key)
-
-
-def _int_value(value: object) -> int | None:
-    if isinstance(value, int):
-        return value
-    return None
-
-
 def _find_commune_code(
     communes: list[object], *, searched_localisation: str
 ) -> str | None:
@@ -875,11 +860,7 @@ def _normalize_contract_type(value: str | None) -> str:
     normalized_value = value.casefold()
     if "cdi" in normalized_value or "indeterminee" in normalized_value:
         return "CDI"
-    if "permanent" in normalized_value:
-        return "CDI"
     if "cdd" in normalized_value or "determinee" in normalized_value:
-        return "CDD"
-    if normalized_value == "contract":
         return "CDD"
     if "interim" in normalized_value or "intérim" in normalized_value:
         return "Interim"
