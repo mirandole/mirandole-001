@@ -9,10 +9,12 @@ import pytest
 from mirandole.config import Settings
 from mirandole.search import (
     AdzunaConnector,
+    AdzunaHttpClient,
     AdzunaHttpResponse,
     DemoSourceConnector,
     DemoSourceUnavailable,
     FranceTravailConnector,
+    FranceTravailHttpClient,
     FranceTravailHttpResponse,
     OfferResult,
     SourceConnectorUnavailable,
@@ -146,6 +148,19 @@ class FakeAdzunaHttpClient:
             status_code=self.search_status_code,
             body=dumps(self.search_payloads[payload_index]).encode(),
         )
+
+
+class FakeUrlopenResponse:
+    status = 200
+
+    def __enter__(self) -> "FakeUrlopenResponse":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return b"{}"
 
 
 def _adzuna_search_payload(
@@ -284,6 +299,41 @@ def test_france_travail_connector_normalizes_resultats_offre() -> None:
     assert results[0].source_identifier == "176ABC"
     assert results[0].result_identity == "France Travail:176ABC"
     assert results[0].remote_text == "Teletravail partiel"
+
+
+def test_france_travail_http_client_logs_request_without_secrets(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_urlopen(request: object, timeout: int) -> FakeUrlopenResponse:
+        return FakeUrlopenResponse()
+
+    monkeypatch.setattr("mirandole.search.urlopen", fake_urlopen)
+    caplog.set_level(logging.INFO, logger="mirandole.search")
+
+    FranceTravailHttpClient().post_form(
+        "https://source.test/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "client-id",
+            "client_secret": "super-secret",
+            "scope": "api_offresdemploiv2",
+        },
+        headers={
+            "Accept": "application/json",
+            "Authorization": "Bearer bearer-token",
+        },
+    )
+
+    assert (
+        "Requete source France Travail envoyee: POST https://source.test/token"
+        in caplog.messages[0]
+    )
+    assert "'client_id': '<redacted>'" in caplog.messages[0]
+    assert "'client_secret': '<redacted>'" in caplog.messages[0]
+    assert "'Authorization': '<redacted>'" in caplog.messages[0]
+    assert "client-id" not in caplog.messages[0]
+    assert "super-secret" not in caplog.messages[0]
+    assert "bearer-token" not in caplog.messages[0]
 
 
 def test_france_travail_connector_resolves_lyon_to_commune_code() -> None:
@@ -467,6 +517,37 @@ def test_adzuna_connector_normalizes_resultats_offre(
         "Adzuna a recupere 1 offre(s) sur 42 disponible(s) en 1 page(s) "
         "pour intitule='Developpeur' localisation='Nantes' rayon=30 km."
     ) in caplog.messages
+
+
+def test_adzuna_http_client_logs_request_without_secret_key(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_urlopen(request: object, timeout: int) -> FakeUrlopenResponse:
+        return FakeUrlopenResponse()
+
+    monkeypatch.setattr("mirandole.search.urlopen", fake_urlopen)
+    caplog.set_level(logging.INFO, logger="mirandole.search")
+
+    AdzunaHttpClient().get_json(
+        "https://api.adzuna.com/v1/api/jobs/fr/search/1",
+        params={
+            "app_id": "app-id",
+            "app_key": "super-key",
+            "what": "Python",
+            "where": "Paris",
+        },
+        headers={"Accept": "application/json"},
+    )
+
+    assert (
+        "Requete source Adzuna envoyee: GET "
+        "https://api.adzuna.com/v1/api/jobs/fr/search/1"
+    ) in caplog.messages[0]
+    assert "'app_id': '<redacted>'" in caplog.messages[0]
+    assert "'app_key': '<redacted>'" in caplog.messages[0]
+    assert "'what': 'Python'" in caplog.messages[0]
+    assert "app-id" not in caplog.messages[0]
+    assert "super-key" not in caplog.messages[0]
 
 
 def test_adzuna_connector_fetches_four_pages_sorted_by_date_descending() -> None:

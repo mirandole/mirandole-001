@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from json import JSONDecodeError, loads
 from pathlib import Path
@@ -26,6 +27,7 @@ from mirandole.storage import (
 
 RAYONS_DEMANDE_KM = [10, 20, 30, 50, 100]
 LOGGER = logging.getLogger(__name__)
+REDACTED_LOG_VALUE = "<redacted>"
 
 
 @dataclass(frozen=True)
@@ -196,9 +198,18 @@ class AdzunaHttpResponse:
 
 
 class FranceTravailHttpClient:
+    source_name = "France Travail"
+
     def post_form(
         self, url: str, data: dict[str, str], headers: dict[str, str]
     ) -> FranceTravailHttpResponse:
+        _log_source_http_request(
+            source_name=self.source_name,
+            method="POST",
+            url=url,
+            form_data=data,
+            headers=headers,
+        )
         encoded_data = urlencode(data).encode()
         request = Request(url, data=encoded_data, headers=headers, method="POST")
         return self._send(request)
@@ -206,6 +217,13 @@ class FranceTravailHttpClient:
     def get_json(
         self, url: str, params: dict[str, str], headers: dict[str, str]
     ) -> FranceTravailHttpResponse:
+        _log_source_http_request(
+            source_name=self.source_name,
+            method="GET",
+            url=url,
+            params=params,
+            headers=headers,
+        )
         separator = "&" if "?" in url else "?"
         request = Request(
             f"{url}{separator}{urlencode(params)}", headers=headers, method="GET"
@@ -229,9 +247,18 @@ class FranceTravailHttpClient:
 
 
 class AdzunaHttpClient:
+    source_name = "Adzuna"
+
     def get_json(
         self, url: str, params: dict[str, str], headers: dict[str, str]
     ) -> AdzunaHttpResponse:
+        _log_source_http_request(
+            source_name=self.source_name,
+            method="GET",
+            url=url,
+            params=params,
+            headers=headers,
+        )
         separator = "&" if "?" in url else "?"
         request = Request(
             f"{url}{separator}{urlencode(params)}", headers=headers, method="GET"
@@ -731,6 +758,52 @@ def _decode_json_payload(body: bytes, *, source_name: str) -> dict[str, object]:
             f"{source_name} a retourne un format inattendu."
         )
     return payload
+
+
+def _log_source_http_request(
+    *,
+    source_name: str,
+    method: str,
+    url: str,
+    params: Mapping[str, str] | None = None,
+    form_data: Mapping[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> None:
+    details: list[str] = []
+    if params is not None:
+        details.append(f"params={_redact_log_mapping(params)!r}")
+    if form_data is not None:
+        details.append(f"form={_redact_log_mapping(form_data)!r}")
+    if headers is not None:
+        details.append(f"headers={_redact_log_mapping(headers)!r}")
+
+    LOGGER.info(
+        "Requete source %s envoyee: %s %s%s",
+        source_name,
+        method,
+        url,
+        f" {' '.join(details)}" if details else "",
+    )
+
+
+def _redact_log_mapping(values: Mapping[str, str]) -> dict[str, str]:
+    return {
+        key: REDACTED_LOG_VALUE if _is_sensitive_log_key(key) else value
+        for key, value in values.items()
+    }
+
+
+def _is_sensitive_log_key(key: str) -> bool:
+    normalized_key = key.casefold().replace("-", "_")
+    return (
+        normalized_key == "authorization"
+        or normalized_key == "app_id"
+        or normalized_key == "app_key"
+        or normalized_key == "client_id"
+        or normalized_key == "client_secret"
+        or normalized_key.endswith("_secret")
+        or normalized_key.endswith("_token")
+    )
 
 
 def _string_value(value: object) -> str | None:
