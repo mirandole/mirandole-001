@@ -78,26 +78,6 @@ sbx exec \
   >"$LOG_FILE" 2>&1 &
 APP_PID="$!"
 
-# Publish the sandbox port to the host after sbx has started the container.
-# sbx may need a few seconds before Docker reports the container endpoint.
-echo "Publishing sandbox port ${HOST_PORT}:${HOST_PORT}..."
-PORT_PUBLISHED="false"
-for _ in $(seq 1 30); do
-  if sbx ports "$SANDBOX" --publish "${HOST_PORT}:${HOST_PORT}" >/dev/null 2>&1; then
-    PORT_PUBLISHED="true"
-    break
-  fi
-  sleep 1
-done
-
-if [ "$PORT_PUBLISHED" != "true" ]; then
-  echo "Could not publish sandbox port ${HOST_PORT}:${HOST_PORT}."
-  echo "Recent app log:"
-  tail -n 80 "$LOG_FILE" || true
-  kill "$APP_PID" 2>/dev/null || true
-  exit 1
-fi
-
 # Ensure Ctrl-C, TERM, or normal script exit stops the background app process.
 cleanup() {
   trap - EXIT INT TERM
@@ -108,6 +88,33 @@ cleanup() {
     >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
+
+# Publish the sandbox port to the host after sbx has started the container.
+# sbx may need a few seconds before Docker reports the container endpoint.
+echo "Publishing sandbox port ${HOST_PORT}:${HOST_PORT}..."
+PORT_PUBLISHED="false"
+PUBLISH_OUTPUT=""
+for _ in $(seq 1 30); do
+  if PUBLISH_OUTPUT="$(sbx ports "$SANDBOX" --publish "${HOST_PORT}:${HOST_PORT}" 2>&1)"; then
+    PORT_PUBLISHED="true"
+    break
+  fi
+  if [[ "$PUBLISH_OUTPUT" == *"already published"* ]]; then
+    PORT_PUBLISHED="true"
+    break
+  fi
+  sleep 1
+done
+
+if [ "$PORT_PUBLISHED" != "true" ]; then
+  echo "Could not publish sandbox port ${HOST_PORT}:${HOST_PORT}."
+  if [ -n "$PUBLISH_OUTPUT" ]; then
+    echo "$PUBLISH_OUTPUT"
+  fi
+  echo "Recent app log:"
+  tail -n 80 "$LOG_FILE" || true
+  exit 1
+fi
 
 # Poll the local app endpoint until it responds, or give up after 60 seconds.
 echo "Waiting for app to respond..."
