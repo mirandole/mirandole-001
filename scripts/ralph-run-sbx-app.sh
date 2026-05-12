@@ -6,13 +6,21 @@ set -euo pipefail
 # Useful one-shot overrides:
 # RALPH_SBX_APP_HOST_PORT=8001 scripts/ralph-run-sbx-app.sh
 # RALPH_SBX_APP_PUBLIC_URL=http://localhost:8001/ scripts/ralph-run-sbx-app.sh
+# RALPH_SBX_APP_WORKTREE=dev2 scripts/ralph-run-sbx-app.sh
+# scripts/ralph-run-sbx-app.sh /path/to/worktree
 
 SANDBOX="${RALPH_SBX_NAME:-mirandole-001}"
+
+if [ "$#" -gt 1 ]; then
+  echo "Usage: $0 [worktree-path-or-branch]"
+  exit 2
+fi
 
 # The ${VAR:-default} form means: use $VAR if it exists, otherwise use default.
 HOST="${RALPH_SBX_APP_HOST:-0.0.0.0}"
 HOST_PORT="${RALPH_SBX_APP_HOST_PORT:-8000}"
 PUBLIC_URL="${RALPH_SBX_APP_PUBLIC_URL:-http://127.0.0.1:${HOST_PORT}/}"
+WORKTREE_SELECTOR="${RALPH_SBX_APP_WORKTREE:-${1:-}}"
 
 # Resolve the repository root from this script location, so the script can be
 # run from any current directory.
@@ -21,9 +29,76 @@ ROOT="$(
   pwd
 )"
 
+resolve_worktree() {
+  local selector="$1"
+
+  if [ -z "$selector" ]; then
+    printf '%s\n' "$ROOT"
+    return 0
+  fi
+
+  if [ -d "$selector" ]; then
+    (
+      cd "$selector" >/dev/null
+      pwd
+    )
+    return 0
+  fi
+
+  if [ -d "${ROOT}/${selector}" ]; then
+    (
+      cd "${ROOT}/${selector}" >/dev/null
+      pwd
+    )
+    return 0
+  fi
+
+  git -C "$ROOT" worktree list --porcelain | awk -v selector="$selector" '
+    /^worktree / {
+      worktree = substr($0, 10)
+      worktree_name = worktree
+      sub("^.*/", "", worktree_name)
+      branch = ""
+      if (selector == worktree || selector == worktree_name) {
+        print worktree
+        found = 1
+        exit
+      }
+      next
+    }
+    /^branch / {
+      branch = substr($0, 8)
+      short_branch = branch
+      sub("^refs/heads/", "", short_branch)
+      if (selector == branch || selector == short_branch) {
+        print worktree
+        found = 1
+        exit
+      }
+      next
+    }
+    /^$/ {
+      worktree = ""
+      worktree_name = ""
+      branch = ""
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  '
+}
+
+APP_WORKTREE="$(resolve_worktree "$WORKTREE_SELECTOR")" || {
+  echo "Could not find worktree: $WORKTREE_SELECTOR"
+  echo
+  echo "Available worktrees:"
+  git -C "$ROOT" worktree list
+  exit 1
+}
+
 echo "Sandbox app"
 echo "Sandbox: $SANDBOX"
-echo "Worktree: $ROOT"
+echo "Worktree: $APP_WORKTREE"
 echo
 echo "Starting app. Login password: sandbox-password"
 echo "Bind: ${HOST}:${HOST_PORT}"
@@ -31,7 +106,7 @@ echo "Open: ${PUBLIC_URL}"
 echo "Press Ctrl-C to stop."
 echo
 
-ENV_FILE="${ROOT}/.env.ralph.local"
+ENV_FILE="${APP_WORKTREE}/.env.ralph.local"
 SBX_ENV_FILE_ARGS=()
 
 # Optional local secrets and source credentials live outside committed code.
@@ -47,14 +122,14 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # The app writes to a local SQLite database and the script tails this log file.
-LOG_FILE="${ROOT}/var/sbx-app.log"
-mkdir -p "${ROOT}/var"
+LOG_FILE="${APP_WORKTREE}/var/sbx-app.log"
+mkdir -p "${APP_WORKTREE}/var"
 
 # Export the environment expected by mirandole.config.Settings.from_env().
 # Existing values are preserved, so callers can override them before the command.
 export MIRANDOLE_PASSWORD="${MIRANDOLE_PASSWORD:-sandbox-password}"
 export MIRANDOLE_SESSION_SECRET="${MIRANDOLE_SESSION_SECRET:-sandbox-session-secret-sandbox-session-secret}"
-export MIRANDOLE_DATABASE_PATH="${MIRANDOLE_DATABASE_PATH:-${ROOT}/var/sbx-app.sqlite3}"
+export MIRANDOLE_DATABASE_PATH="${MIRANDOLE_DATABASE_PATH:-${APP_WORKTREE}/var/sbx-app.sqlite3}"
 export MIRANDOLE_COOKIE_SECURE="${MIRANDOLE_COOKIE_SECURE:-false}"
 export PROD="${PROD:-false}"
 export MIRANDOLE_LOG_LEVEL="${MIRANDOLE_LOG_LEVEL:-INFO}"
@@ -64,7 +139,7 @@ export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 # The trailing & runs the host-side sbx exec process in the background so this
 # script can wait for readiness and then stream logs.
 sbx exec \
-  -w "$ROOT" \
+  -w "$APP_WORKTREE" \
   "${SBX_ENV_FILE_ARGS[@]}" \
   -e "MIRANDOLE_PASSWORD=$MIRANDOLE_PASSWORD" \
   -e "MIRANDOLE_SESSION_SECRET=$MIRANDOLE_SESSION_SECRET" \
